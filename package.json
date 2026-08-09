@@ -21,7 +21,7 @@
 		"wrangler": "^4.115.0"
 	},
 	"overrides": {
-		"@cloudflare/vite-plugin": "1.48.0"
+		"@cloudflare/vite-plugin": "1.51.1"
 	},
 	"engines": {
 		"node": ">=22"
