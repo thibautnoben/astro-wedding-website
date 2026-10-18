@@ -38,6 +38,10 @@ import {
 	</section>
 
 	<section class="countdown" data-wedding-date={WEDDING_DATE.toISOString()}>
+		<div class="countdown-item" data-item="months" hidden>
+			<span class="countdown-value" data-unit="months">–</span>
+			<span class="countdown-label">maanden</span>
+		</div>
 		<div class="countdown-item">
 			<span class="countdown-value" data-unit="days">–</span>
 			<span class="countdown-label">dagen</span>
@@ -58,19 +62,47 @@ import {
 </Layout>
 
 <script>
+	function addMonths(date: Date, months: number) {
+		const result = new Date(date);
+		const day = result.getDate();
+		result.setDate(1);
+		result.setMonth(result.getMonth() + months);
+		const lastDay = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+		result.setDate(Math.min(day, lastDay));
+		return result;
+	}
+
 	function updateCountdown() {
 		const section = document.querySelector('.countdown');
 		if (!(section instanceof HTMLElement)) return;
-		const target = new Date(section.dataset.weddingDate ?? '').getTime();
-		const diff = Math.max(0, target - Date.now());
+		const target = new Date(section.dataset.weddingDate ?? '');
+		const now = new Date();
+		const totalDiff = Math.max(0, target.getTime() - now.getTime());
 
-		const seconds = Math.floor(diff / 1000);
+		// Show calendar months only while more than 31 days remain.
+		let months = 0;
+		let anchor = now;
+		if (totalDiff > 31 * 86400 * 1000) {
+			months =
+				(target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth());
+			anchor = addMonths(now, months);
+			if (anchor > target) {
+				months--;
+				anchor = addMonths(now, months);
+			}
+		}
+
+		const seconds = Math.floor(Math.max(0, target.getTime() - anchor.getTime()) / 1000);
 		const values = {
+			months,
 			days: Math.floor(seconds / 86400),
 			hours: Math.floor((seconds % 86400) / 3600),
 			minutes: Math.floor((seconds % 3600) / 60),
 			seconds: seconds % 60,
 		};
+
+		const monthsItem = section.querySelector('[data-item="months"]');
+		if (monthsItem instanceof HTMLElement) monthsItem.hidden = months === 0;
 
 		for (const [unit, value] of Object.entries(values)) {
 			const el = section.querySelector(`[data-unit="${unit}"]`);
@@ -128,6 +160,9 @@ import {
 		flex-direction: column;
 		align-items: center;
 		min-width: 4.5em;
+	}
+	.countdown-item[hidden] {
+		display: none;
 	}
 	.countdown-value {
 		font-size: 2.5em;
