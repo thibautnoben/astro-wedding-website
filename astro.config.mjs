@@ -8,6 +8,8 @@ import cloudflare from "@astrojs/cloudflare";
 export default defineConfig({
 	site: "https://example.com",
 	integrations: [sitemap()],
+	// Sessions are unused; disabling them stops the adapter from adding a SESSION KV binding.
+	session: false,
 	adapter: cloudflare({
 		imageService: "compile",
 		prerenderEnvironment: "node",
