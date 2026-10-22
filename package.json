@@ -25,7 +25,7 @@
 		"svgo": "^4.1.0"
 	},
 	"engines": {
-		"node": ">=22"
+		"node": ">=22.23.4"
 	},
 	"private": true,
 	"scripts": {
