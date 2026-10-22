@@ -12,16 +12,16 @@
 		"publish": true
 	},
 	"dependencies": {
-		"@astrojs/cloudflare": "^14.4.1",
+		"@astrojs/cloudflare": "^14.4.2",
 		"@astrojs/sitemap": "^3.7.4",
-		"astro": "^7.4.1",
+		"astro": "^7.4.2",
 		"typescript": "^7.0.2"
 	},
 	"devDependencies": {
-		"wrangler": "^4.151.2"
+		"wrangler": "^4.152.0"
 	},
 	"overrides": {
-		"@cloudflare/vite-plugin": "1.54.8",
+		"@cloudflare/vite-plugin": "^1.64.0",
 		"svgo": "^4.1.0"
 	},
 	"engines": {
