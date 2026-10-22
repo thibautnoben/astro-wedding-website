@@ -15,7 +15,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: .nvmrc
+          # The runner's cached Node 22 can lag behind the patch release Astro requires.
+          check-latest: true
           cache: npm
       - run: npm ci
       - run: npm run check
