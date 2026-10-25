@@ -12,7 +12,7 @@ const turnstileSiteKey = env.TURNSTILE_SITE_KEY;
 
 <Layout title="RSVP" description={`Laat ons voor ${RSVP_DEADLINE_LABEL} weten of je erbij kan zijn.`}>
 	<span class="eyebrow"><HeartAccent /> RSVP <HeartAccent /></span>
-	<h1>Doe je mee?</h1>
+	<h1>We willen je er graag bij!</h1>
 	<p>
 		Laat ons voor <strong>{RSVP_DEADLINE_LABEL}</strong> weten of je erbij kan zijn. Heb je toch nog
 		vragen, mail dan naar <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
@@ -70,6 +70,11 @@ const turnstileSiteKey = env.TURNSTILE_SITE_KEY;
 		<div class="field">
 			<label for="dieetwensen">Dieetwensen of allergieën</label>
 			<textarea id="dieetwensen" name="dieetwensen" rows="3" maxlength="500"></textarea>
+		</div>
+
+		<div class="field">
+			<label for="dansnummer">Met welk nummer krijgen we jou op de dansvloer?</label>
+			<input type="text" id="dansnummer" name="dansnummer" maxlength="200" />
 		</div>
 
 		<div class="field">
