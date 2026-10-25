@@ -148,6 +148,7 @@ export const POST: APIRoute = async ({ request, redirect, locals }) => {
 	const aanwezig = String(formData.get('aanwezig') ?? '').trim();
 	const aantalGasten = Math.min(Math.max(Number(formData.get('aantal_gasten') ?? 1) || 1, 1), 20);
 	const dieetwensen = String(formData.get('dieetwensen') ?? '').trim().slice(0, 500);
+	const dansnummer = String(formData.get('dansnummer') ?? '').trim().slice(0, 200);
 	const bericht = String(formData.get('bericht') ?? '').trim().slice(0, 1000);
 
 	if (!naam || !email || !EMAIL_RE.test(email) || (aanwezig !== 'ja' && aanwezig !== 'nee')) {
@@ -157,16 +158,17 @@ export const POST: APIRoute = async ({ request, redirect, locals }) => {
 
 	try {
 		await env.DB.prepare(
-			`INSERT INTO rsvps (naam, email, aanwezig, aantal_gasten, dieetwensen, bericht)
-			 VALUES (?, ?, ?, ?, ?, ?)
+			`INSERT INTO rsvps (naam, email, aanwezig, aantal_gasten, dieetwensen, dansnummer, bericht)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(email) DO UPDATE SET
 				naam = excluded.naam,
 				aanwezig = excluded.aanwezig,
 				aantal_gasten = excluded.aantal_gasten,
 				dieetwensen = excluded.dieetwensen,
+				dansnummer = excluded.dansnummer,
 				bericht = excluded.bericht`,
 		)
-			.bind(naam, email, aanwezig, aantalGasten, dieetwensen || null, bericht || null)
+			.bind(naam, email, aanwezig, aantalGasten, dieetwensen || null, dansnummer || null, bericht || null)
 			.run();
 	} catch (error) {
 		console.error('RSVP database insert failed', error);
