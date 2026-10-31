@@ -18,10 +18,10 @@
 		"typescript": "^7.0.2"
 	},
 	"devDependencies": {
-		"wrangler": "^4.152.0"
+		"wrangler": "^4.156.0"
 	},
 	"overrides": {
-		"@cloudflare/vite-plugin": "^1.64.0",
+		"@cloudflare/vite-plugin": "^1.66.0",
 		"svgo": "^4.1.0"
 	},
 	"engines": {
