@@ -244,9 +244,9 @@ const fullSize = await Promise.all(
 </script>
 
 <style>
-	/* Let the barrel extend beyond the 720px content column without causing horizontal scroll. */
+	/* Lets the barrel use cqw = the page width without the scrollbar (100vw includes it). */
 	:global(body) {
-		overflow-x: clip;
+		container-type: inline-size;
 	}
 
 	.barrel {
@@ -256,8 +256,9 @@ const fullSize = await Promise.all(
 		/* Radius of a ring of `count` cards of width w + gap. */
 		--r: calc((var(--w) + var(--gap)) / 2 / tan(180deg / var(--count)));
 
-		width: 100vw;
-		margin-inline: calc(50% - 50vw);
+		/* Full page width, breaking out of the 720px content column. */
+		width: 100cqw;
+		margin-inline: calc(50% - 50cqw);
 		margin-block: 2em 1em;
 		padding-block: 2.5em;
 		perspective: 1400px;
