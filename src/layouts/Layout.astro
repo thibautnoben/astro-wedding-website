@@ -15,6 +15,17 @@ const { title, description } = Astro.props;
 <html lang="nl">
 	<head>
 		<BaseHead title={title} description={description} />
+		<script is:inline>
+			// Hide [data-animate] elements before first paint so they can animate in.
+			// Skipped for reduced-motion users; undone if the animation script never loads.
+			if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+				var r = document.documentElement;
+				r.classList.add('motion-ok');
+				setTimeout(function () {
+					if (!r.dataset.motionReady) r.classList.remove('motion-ok');
+				}, 3000);
+			}
+		</script>
 	</head>
 	<body>
 		<Header />
@@ -22,5 +33,14 @@ const { title, description } = Astro.props;
 			<slot />
 		</main>
 		<Footer />
+		<script>
+			import '../scripts/animations';
+		</script>
 	</body>
 </html>
+
+<style is:global>
+	.motion-ok [data-animate] {
+		opacity: 0;
+	}
+</style>

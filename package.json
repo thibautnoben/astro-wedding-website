@@ -15,6 +15,7 @@
 		"@astrojs/cloudflare": "^14.4.2",
 		"@astrojs/sitemap": "^3.7.4",
 		"astro": "^7.4.2",
+		"motion": "14.9.0",
 		"typescript": "^7.0.2"
 	},
 	"devDependencies": {
