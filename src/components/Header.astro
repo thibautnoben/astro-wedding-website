@@ -45,6 +45,8 @@ import { PARTNER_ONE, PARTNER_TWO } from '../consts';
 		background: #fdf8f0;
 		box-shadow: 0 2px 8px rgba(var(--black), 5%);
 		position: relative;
+		/* Keep the (mobile) menu above animated page content, which creates its own layers. */
+		z-index: 10;
 	}
 	h2 {
 		margin: 0;

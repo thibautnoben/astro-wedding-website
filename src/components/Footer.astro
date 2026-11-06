@@ -26,6 +26,8 @@ const today = new Date();
 
 		position: relative;
 		isolation: isolate;
+		/* Never let the riding bike widen the page; vertical overflow stays visible. */
+		overflow-x: clip;
 		margin-top: 3em;
 		padding: calc(var(--rise) + 2em) 1em 6em 1em;
 		color: rgb(var(--gray));
@@ -52,16 +54,18 @@ const today = new Date();
 		transform-origin: 0 0;
 		transform: rotate(var(--angle));
 		pointer-events: none;
+		/* Lets the rider use cqw = length of the slope. */
+		container-type: inline-size;
 	}
 
-	/* Spans the full slope; translating it moves the bike along the edge. */
+	/* Bike-sized box that moves along the slope. */
 	.footer-rider {
 		position: absolute;
 		left: 0;
 		bottom: 0;
-		width: 100%;
+		width: var(--bike-w);
 		/* Parked at the bottom (right) of the hill unless animating. */
-		translate: calc(100% - var(--bike-w) - 1em) 0;
+		translate: calc(100cqw - var(--bike-w) - 1em) 0;
 	}
 
 	.footer-bike {
@@ -74,7 +78,7 @@ const today = new Date();
 
 	@media (prefers-reduced-motion: no-preference) {
 		.footer-rider {
-			animation: footer-climb 28s ease-in-out infinite;
+			animation: footer-ride 34.5s linear infinite;
 		}
 		/* Pedalling effort: a small bob while climbing. */
 		.footer-bike {
@@ -82,23 +86,41 @@ const today = new Date();
 		}
 	}
 
-	@keyframes footer-climb {
+	/*
+	 * One 34.5s loop:
+	 *   0    – 24s     climb, right → left            (0%      – 69.57%)
+	 *   24   – 24.75s  rest at the summit             (69.57%  – 71.74%)
+	 *   24.75 – 25.25s turn around (mirror)           (71.74%  – 73.19%)
+	 *   25.25 – 33.25s ride down, 3× faster (8s)      (73.19%  – 96.38%)
+	 *   33.25 – 34s    rest at the bottom             (96.38%  – 98.55%)
+	 *   34   – 34.5s   turn around again              (98.55%  – 100%)
+	 */
+	@keyframes footer-ride {
 		0% {
-			translate: calc(100% - var(--bike-w)) 0;
-			opacity: 0;
+			translate: calc(100cqw - var(--bike-w)) 0;
+			scale: 1 1;
+			animation-timing-function: ease-in-out;
 		}
-		4% {
-			opacity: 1;
-		}
-		90% {
+		69.57%,
+		71.74% {
 			translate: 0 0;
-			opacity: 1;
+			scale: 1 1;
+			animation-timing-function: ease-in-out;
 		}
-		/* Rest at the summit, then disappear and start again at the bottom. */
-		96%,
+		73.19% {
+			translate: 0 0;
+			scale: -1 1;
+			animation-timing-function: ease-in-out;
+		}
+		96.38%,
+		98.55% {
+			translate: calc(100cqw - var(--bike-w)) 0;
+			scale: -1 1;
+			animation-timing-function: ease-in-out;
+		}
 		100% {
-			translate: 0 0;
-			opacity: 0;
+			translate: calc(100cqw - var(--bike-w)) 0;
+			scale: 1 1;
 		}
 	}
 
