@@ -1,9 +1,17 @@
 ---
+import { Image } from 'astro:assets';
 import { PARTNER_ONE, PARTNER_TWO, CONTACT_EMAIL } from '../consts';
+import bike from '../assets/images/bike.png';
 const today = new Date();
 ---
 
 <footer>
+	<!-- The footer's top edge is a slope; the bike rides up it from right to left. -->
+	<div class="footer-hill" aria-hidden="true">
+		<div class="footer-rider">
+			<Image src={bike} alt="" class="footer-bike" width={60} densities={[1, 2]} loading="lazy" />
+		</div>
+	</div>
 	&copy; {today.getFullYear()} {PARTNER_ONE} & {PARTNER_TWO}
 	<div class="contact">
 		Vragen? Mail naar <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
@@ -11,11 +19,100 @@ const today = new Date();
 </footer>
 <style>
 	footer {
-		padding: 2em 1em 6em 1em;
-		background: linear-gradient(var(--gray-gradient)) no-repeat;
+		--angle: 3deg;
+		/* Height difference between the left and right end of the slope. */
+		--rise: calc(100vw * tan(var(--angle)));
+		--bike-w: 60px;
+
+		position: relative;
+		isolation: isolate;
+		margin-top: 3em;
+		padding: calc(var(--rise) + 2em) 1em 6em 1em;
 		color: rgb(var(--gray));
 		text-align: center;
 	}
+
+	/* Background with a sloped top edge: high on the left, low on the right. */
+	footer::before {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		background: linear-gradient(var(--gray-gradient)) no-repeat;
+		clip-path: polygon(0 0, 100% var(--rise), 100% 100%, 0 100%);
+	}
+
+	/* A zero-height line lying exactly on the sloped edge. */
+	.footer-hill {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: calc(100% / cos(var(--angle)));
+		height: 0;
+		transform-origin: 0 0;
+		transform: rotate(var(--angle));
+		pointer-events: none;
+	}
+
+	/* Spans the full slope; translating it moves the bike along the edge. */
+	.footer-rider {
+		position: absolute;
+		left: 0;
+		bottom: 0;
+		width: 100%;
+		/* Parked at the bottom (right) of the hill unless animating. */
+		translate: calc(100% - var(--bike-w) - 1em) 0;
+	}
+
+	.footer-bike {
+		position: absolute;
+		left: 0;
+		bottom: -3px;
+		width: var(--bike-w);
+		height: auto;
+	}
+
+	@media (prefers-reduced-motion: no-preference) {
+		.footer-rider {
+			animation: footer-climb 28s ease-in-out infinite;
+		}
+		/* Pedalling effort: a small bob while climbing. */
+		.footer-bike {
+			animation: footer-pedal 0.45s ease-in-out infinite alternate;
+		}
+	}
+
+	@keyframes footer-climb {
+		0% {
+			translate: calc(100% - var(--bike-w)) 0;
+			opacity: 0;
+		}
+		4% {
+			opacity: 1;
+		}
+		90% {
+			translate: 0 0;
+			opacity: 1;
+		}
+		/* Rest at the summit, then disappear and start again at the bottom. */
+		96%,
+		100% {
+			translate: 0 0;
+			opacity: 0;
+		}
+	}
+
+	@keyframes footer-pedal {
+		from {
+			translate: 0 0;
+			rotate: 0deg;
+		}
+		to {
+			translate: 0 -1.5px;
+			rotate: -1deg;
+		}
+	}
+
 	.contact {
 		margin-top: 0.5em;
 	}

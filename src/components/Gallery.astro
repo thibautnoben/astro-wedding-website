@@ -1,33 +1,400 @@
 ---
-import { Image } from 'astro:assets';
+import { Image, getImage } from 'astro:assets';
 
 const photos = Object.values(
-	import.meta.glob('../assets/images/gallery/*.{jpg,jpeg,png}', {
+	import.meta.glob<ImageMetadata>('../assets/images/gallery/*.{jpg,jpeg,png}', {
 		eager: true,
 		import: 'default',
 	}),
 );
+
+// Full-size versions for the detail view (and the no-JS link target).
+const fullSize = await Promise.all(
+	photos.map((photo) => getImage({ src: photo, width: Math.min(photo.width, 1600), format: 'webp' })),
+);
 ---
 
-<div class="gallery">
-	{
-		photos.map((photo) => (
-			<Image src={photo} alt="" widths={[300, 600, 900]} sizes="(min-width: 720px) 340px, 45vw" />
-		))
+<section class="barrel" aria-label="Fotogalerij" data-animate="fade" style={`--count: ${photos.length}`}>
+	<div class="barrel-ring">
+		<ul class="barrel-spinner">
+			{
+				photos.map((photo, i) => (
+					<li class="barrel-item" style={`--i: ${i}`}>
+						<a
+							href={fullSize[i].src}
+							data-full={fullSize[i].src}
+							data-index={i}
+							aria-label={`Foto ${i + 1} van ${photos.length} vergroten`}
+							draggable="false"
+						>
+							<Image
+								src={photo}
+								alt=""
+								widths={[300, 600]}
+								sizes="220px"
+								draggable="false"
+							/>
+						</a>
+					</li>
+				))
+			}
+		</ul>
+	</div>
+</section>
+
+<dialog class="lightbox" aria-label="Foto">
+	<div class="lightbox-backdrop" data-close></div>
+	<figure class="lightbox-figure">
+		<img alt="" />
+	</figure>
+	<button class="lightbox-btn lightbox-close" type="button" data-close aria-label="Sluiten">×</button>
+	<button class="lightbox-btn lightbox-prev" type="button" data-step="-1" aria-label="Vorige foto">‹</button>
+	<button class="lightbox-btn lightbox-next" type="button" data-step="1" aria-label="Volgende foto">›</button>
+</dialog>
+
+<script>
+	import { animate } from 'motion/mini';
+
+	const SPIN_SECONDS = 60; // one full turn
+	const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+	const barrel = document.querySelector<HTMLElement>('.barrel');
+	const spinner = document.querySelector<HTMLElement>('.barrel-spinner');
+	const dialog = document.querySelector<HTMLDialogElement>('.lightbox');
+
+	if (barrel && spinner && dialog) {
+		const links = [...spinner.querySelectorAll<HTMLAnchorElement>('a[data-full]')];
+		const count = links.length;
+
+		// --- Slowly turning barrel -------------------------------------------
+		const spin = animate(
+			spinner,
+			{ transform: ['rotateY(0deg)', 'rotateY(-360deg)'] },
+			{ duration: SPIN_SECONDS, ease: 'linear', repeat: Infinity },
+		);
+		if (reduced) spin.pause();
+
+		const wrapTime = (t: number) => ((t % SPIN_SECONDS) + SPIN_SECONDS) % SPIN_SECONDS;
+		const timeForIndex = (i: number) => (i / count) * SPIN_SECONDS;
+
+		let hovering = false;
+		let dragging = false;
+		let open = false;
+		const resume = () => {
+			if (reduced || open || dragging) return;
+			spin.speed = hovering ? 0.25 : 1;
+			spin.play();
+		};
+
+		barrel.addEventListener('pointerenter', () => {
+			hovering = true;
+			if (!reduced) spin.speed = 0.25;
+		});
+		barrel.addEventListener('pointerleave', () => {
+			hovering = false;
+			if (!reduced) spin.speed = 1;
+		});
+
+		// Drag to spin. A small movement threshold keeps clicks working.
+		let startX = 0;
+		let startTime = 0;
+		let moved = false;
+		barrel.addEventListener('pointerdown', (e) => {
+			if (e.button !== 0) return;
+			dragging = true;
+			moved = false;
+			startX = e.clientX;
+			startTime = spin.time;
+			spin.pause();
+		});
+		window.addEventListener('pointermove', (e) => {
+			if (!dragging) return;
+			const dx = e.clientX - startX;
+			if (Math.abs(dx) > 5) moved = true;
+			// Dragging the full stage width turns the barrel ~half a revolution.
+			const secondsPerPx = SPIN_SECONDS / 2 / barrel.clientWidth;
+			spin.time = wrapTime(startTime - dx * secondsPerPx);
+		});
+		const endDrag = () => {
+			if (!dragging) return;
+			dragging = false;
+			resume();
+		};
+		window.addEventListener('pointerup', endDrag);
+		window.addEventListener('pointercancel', endDrag);
+
+		// Keyboard focus: bring the focused photo to the front.
+		barrel.addEventListener('focusin', (e) => {
+			const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[data-index]');
+			if (!link || !link.matches(':focus-visible')) return; // keyboard only
+			spin.pause();
+			spin.time = timeForIndex(Number(link.dataset.index));
+		});
+		barrel.addEventListener('focusout', (e) => {
+			if (!barrel.contains(e.relatedTarget as Node | null)) resume();
+		});
+
+		// --- Detail view ------------------------------------------------------
+		const figure = dialog.querySelector<HTMLElement>('.lightbox-figure')!;
+		const img = figure.querySelector('img')!;
+		const backdrop = dialog.querySelector<HTMLElement>('.lightbox-backdrop')!;
+		const buttons = dialog.querySelectorAll<HTMLElement>('.lightbox-btn');
+		let current = 0;
+
+		const d = (seconds: number) => (reduced ? 0 : seconds);
+
+		// Transform that makes the (centred) figure overlap the given thumbnail.
+		function transformFrom(thumb: Element) {
+			const from = thumb.getBoundingClientRect();
+			const to = figure.getBoundingClientRect();
+			const scale = Math.max(from.height / to.height, from.width / to.width);
+			const dx = from.left + from.width / 2 - (to.left + to.width / 2);
+			const dy = from.top + from.height / 2 - (to.top + to.height / 2);
+			return `translate(${dx}px, ${dy}px) scale(${scale})`;
+		}
+
+		function setImage(i: number) {
+			current = (i + count) % count;
+			const thumb = links[current].querySelector('img')!;
+			// Show the already-loaded thumbnail immediately, swap in full size once decoded.
+			img.src = thumb.currentSrc || thumb.src;
+			const full = new window.Image();
+			full.src = links[current].dataset.full!;
+			const wanted = current;
+			full.decode().then(
+				() => {
+					if (current === wanted && open) img.src = full.src;
+				},
+				() => {},
+			);
+		}
+
+		async function openAt(i: number) {
+			open = true;
+			spin.pause();
+			setImage(i);
+			dialog!.showModal();
+			const thumb = links[current].querySelector('img')!;
+			await Promise.all([
+				animate(backdrop, { opacity: [0, 1] }, { duration: d(0.35) }),
+				animate(buttons, { opacity: [0, 1] }, { duration: d(0.3), delay: d(0.2) }),
+				animate(
+					figure,
+					{ transform: [transformFrom(thumb), 'none'], opacity: [0.6, 1] },
+					{ duration: d(0.5), ease: [0.22, 1, 0.36, 1] },
+				),
+			]);
+		}
+
+		async function close() {
+			if (!open) return;
+			const thumb = links[current].querySelector('img')!;
+			await Promise.all([
+				animate(backdrop, { opacity: 0 }, { duration: d(0.3) }),
+				animate(buttons, { opacity: 0 }, { duration: d(0.15) }),
+				animate(
+					figure,
+					{ transform: transformFrom(thumb), opacity: 0 },
+					{ duration: d(0.4), ease: [0.64, 0, 0.78, 0] },
+				),
+			]);
+			dialog!.close();
+			figure.style.transform = '';
+			open = false;
+			links[current].focus({ preventScroll: true });
+			resume();
+		}
+
+		async function step(delta: number) {
+			const dir = Math.sign(delta);
+			await animate(figure, { opacity: 0, transform: `translateX(${-dir * 40}px)` }, { duration: d(0.15) });
+			setImage(current + delta);
+			// Keep the barrel in sync so closing flies back to the right photo.
+			spin.time = timeForIndex(current);
+			await animate(
+				figure,
+				{ opacity: [0, 1], transform: [`translateX(${dir * 40}px)`, 'none'] },
+				{ duration: d(0.25), ease: 'easeOut' },
+			);
+		}
+
+		links.forEach((link, i) => {
+			link.addEventListener('click', (e) => {
+				e.preventDefault();
+				if (moved) return; // it was a drag, not a click
+				openAt(i);
+			});
+		});
+
+		dialog.addEventListener('click', (e) => {
+			const target = e.target as HTMLElement;
+			if (target.closest('[data-close]')) close();
+			const stepBtn = target.closest<HTMLElement>('[data-step]');
+			if (stepBtn) step(Number(stepBtn.dataset.step));
+		});
+		dialog.addEventListener('cancel', (e) => {
+			e.preventDefault(); // Escape: animate out instead of closing instantly
+			close();
+		});
+		dialog.addEventListener('keydown', (e) => {
+			if (e.key === 'ArrowRight') step(1);
+			if (e.key === 'ArrowLeft') step(-1);
+		});
 	}
-</div>
+</script>
 
 <style>
-	.gallery {
-		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		gap: 0.75em;
+	/* Let the barrel extend beyond the 720px content column without causing horizontal scroll. */
+	:global(body) {
+		overflow-x: clip;
 	}
-	.gallery :global(img) {
+
+	.barrel {
+		--w: clamp(130px, 24vw, 220px);
+		--gap: clamp(10px, 2vw, 20px);
+		--h: calc(var(--w) * 4 / 3);
+		/* Radius of a ring of `count` cards of width w + gap. */
+		--r: calc((var(--w) + var(--gap)) / 2 / tan(180deg / var(--count)));
+
+		width: 100vw;
+		margin-inline: calc(50% - 50vw);
+		margin-block: 2em 1em;
+		padding-block: 2.5em;
+		perspective: 1400px;
+		perspective-origin: 50% 35%;
+		overflow: hidden;
+		touch-action: pan-y;
+		user-select: none;
+		cursor: grab;
+	}
+	.barrel:active {
+		cursor: grabbing;
+	}
+
+	.barrel-ring {
+		position: relative;
+		width: var(--w);
+		height: var(--h);
+		margin: 0 auto;
+		transform-style: preserve-3d;
+		/* Push the ring back so the front card sits at its natural size. */
+		transform: translateZ(calc(-1 * var(--r))) rotateX(-6deg);
+	}
+
+	.barrel-spinner {
+		position: absolute;
+		inset: 0;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		transform-style: preserve-3d;
+	}
+
+	.barrel-item {
+		position: absolute;
+		inset: 0;
+		transform: rotateY(calc(var(--i) * 360deg / var(--count))) translateZ(var(--r));
+		backface-visibility: hidden;
+	}
+
+	.barrel-item a {
 		display: block;
 		width: 100%;
-		aspect-ratio: 1 / 1;
+		height: 100%;
+		border-radius: 10px;
+		overflow: hidden;
+		box-shadow: 0 12px 28px -12px rgb(0 0 0 / 0.35);
+		-webkit-user-drag: none;
+	}
+	.barrel-item a:focus-visible {
+		outline: 3px solid var(--accent);
+		outline-offset: 3px;
+	}
+	.barrel-item :global(img) {
+		display: block;
+		width: 100%;
+		height: 100%;
 		object-fit: cover;
-		border-radius: 8px;
+		pointer-events: none;
+		transition: transform 0.4s ease;
+	}
+	.barrel-item a:hover :global(img) {
+		transform: scale(1.05);
+	}
+
+	/* --- Detail view --- */
+	.lightbox {
+		width: 100vw;
+		height: 100dvh;
+		max-width: none;
+		max-height: none;
+		margin: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		overflow: hidden;
+	}
+	.lightbox::backdrop {
+		background: transparent;
+	}
+	.lightbox[open] {
+		display: grid;
+		place-items: center;
+	}
+	.lightbox-backdrop {
+		position: absolute;
+		inset: 0;
+		background: rgb(28 22 18 / 0.88);
+	}
+	.lightbox-figure {
+		position: relative;
+		margin: 0;
+		will-change: transform;
+	}
+	.lightbox-figure img {
+		display: block;
+		max-width: min(92vw, 1200px);
+		max-height: 84dvh;
+		border-radius: 10px;
+		box-shadow: 0 30px 60px -20px rgb(0 0 0 / 0.6);
+	}
+	.lightbox-btn {
+		position: absolute;
+		display: grid;
+		place-items: center;
+		width: 2.75rem;
+		height: 2.75rem;
+		border: 0;
+		border-radius: 999px;
+		background: rgb(255 255 255 / 0.15);
+		color: #fff;
+		font-size: 1.75rem;
+		line-height: 1;
+		cursor: pointer;
+	}
+	.lightbox-btn:hover,
+	.lightbox-btn:focus-visible {
+		background: rgb(255 255 255 / 0.3);
+	}
+	.lightbox-close {
+		top: 1rem;
+		right: 1rem;
+	}
+	.lightbox-prev,
+	.lightbox-next {
+		top: 50%;
+		translate: 0 -50%;
+	}
+	.lightbox-prev {
+		left: 1rem;
+	}
+	.lightbox-next {
+		right: 1rem;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.barrel-item :global(img) {
+			transition: none;
+		}
 	}
 </style>

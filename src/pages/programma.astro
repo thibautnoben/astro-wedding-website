@@ -27,8 +27,8 @@ const schedule = [
 
 	<ol class="timeline">
 		{
-			schedule.map((item) => (
-				<li class="card timeline-item">
+			schedule.map((item, i) => (
+				<li class="card timeline-item" data-animate data-delay={i * 0.08}>
 					<div class="timeline-time">{item.time}</div>
 					<div>
 						<h3>{item.title}</h3>

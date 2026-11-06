@@ -3,6 +3,7 @@ import { Image } from 'astro:assets';
 import Layout from '../layouts/Layout.astro';
 import HeartAccent from '../components/HeartAccent.astro';
 import heroImage from '../assets/images/hero.jpg';
+import logo from '../assets/images/logo.png';
 import {
 	PARTNER_ONE,
 	PARTNER_TWO,
@@ -14,30 +15,47 @@ import {
 ---
 
 <Layout title={`${PARTNER_ONE} & ${PARTNER_TWO}`} description={SITE_DESCRIPTION}>
-	<Image
-		src={heroImage}
-		alt={`${PARTNER_ONE} & ${PARTNER_TWO}`}
-		widths={[400, 800, 1200, 2000]}
-		sizes="(min-width: 720px) 720px, 100vw"
-		class="hero-image"
-	/>
+	<div data-animate="fade-blur" data-animate-on="load">
+		<Image
+			src={heroImage}
+			alt={`${PARTNER_ONE} & ${PARTNER_TWO}`}
+			widths={[400, 800, 1200, 2000]}
+			sizes="(min-width: 720px) 720px, 100vw"
+			class="hero-image"
+		/>
+	</div>
 	<section class="hero">
-		<span class="eyebrow"><HeartAccent /> Wij trouwen <HeartAccent /></span>
-		<h1>
+		<Image
+			src={logo}
+			alt={`Logo ${PARTNER_ONE} & ${PARTNER_TWO}`}
+			class="hero-logo"
+			width={180}
+			densities={[1, 2]}
+			loading="eager"
+			data-animate
+			data-animate-on="load"
+			data-delay="0.15"
+		/>
+		<span class="eyebrow" data-animate data-animate-on="load" data-delay="0.3">
+			<HeartAccent /> Wij trouwen <HeartAccent />
+		</span>
+		<h1 data-animate data-animate-on="load" data-delay="0.5">
 			{PARTNER_ONE} & {PARTNER_TWO}
 		</h1>
-		<p class="date-venue">{WEDDING_DATE_LABEL} — {WEDDING_VENUE}</p>
-		<p>
+		<p class="date-venue" data-animate data-animate-on="load" data-delay="0.75">
+			{WEDDING_DATE_LABEL} — {WEDDING_VENUE}
+		</p>
+		<p data-animate data-animate-on="load" data-delay="0.9">
 			Na jaren samen zetten we de volgende stap. We nodigen je van harte uit om deze dag samen met
 			ons te vieren.
 		</p>
-		<div class="cta">
+		<div class="cta" data-animate data-animate-on="load" data-delay="1.05">
 			<a class="btn btn-solid" href="/rsvp">RSVP</a>
 			<a class="btn" href="/programma">Bekijk het programma</a>
 		</div>
 	</section>
 
-	<section class="countdown" data-wedding-date={WEDDING_DATE.toISOString()}>
+	<section class="countdown" data-animate="scale" data-wedding-date={WEDDING_DATE.toISOString()}>
 		<div class="countdown-item" data-item="months" hidden>
 			<span class="countdown-value" data-unit="months">–</span>
 			<span class="countdown-label">maanden</span>
@@ -125,6 +143,13 @@ import {
 	.hero {
 		text-align: center;
 		padding: 2em 0 3em;
+	}
+	.hero-logo {
+		display: block;
+		width: 180px;
+		max-width: 45vw;
+		height: auto;
+		margin: 0 auto 1em;
 	}
 	.hero h1 {
 		font-size: 3.5em;
