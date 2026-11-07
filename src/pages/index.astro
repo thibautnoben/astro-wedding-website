@@ -12,6 +12,16 @@ import {
 	WEDDING_DATE_LABEL,
 	WEDDING_VENUE,
 } from '../consts';
+
+// Static "data fields" on the bike computer, in Belgian time.
+const tz = 'Europe/Brussels';
+const datePart = (opts: Intl.DateTimeFormatOptions) =>
+	new Intl.DateTimeFormat('nl-BE', { timeZone: tz, ...opts }).format(WEDDING_DATE);
+const weddingDayMonth = `${datePart({ day: '2-digit' })}.${datePart({ month: '2-digit' })}`;
+const weddingYear = datePart({ year: '2-digit' });
+const weddingStart = datePart({ hour: '2-digit', minute: '2-digit', hour12: false });
+// Decorative "climb" profile for the bar-chart field (last bars highlighted).
+const climb = [28, 32, 30, 38, 44, 41, 50, 58, 64, 72, 82, 94];
 ---
 
 <Layout title={`${PARTNER_ONE} & ${PARTNER_TWO}`} description={SITE_DESCRIPTION}>
@@ -56,38 +66,87 @@ import {
 	</section>
 
 	<section class="countdown" data-animate="scale" data-wedding-date={WEDDING_DATE.toISOString()}>
-		<div class="countdown-item" data-item="months" hidden>
-			<span class="countdown-value" data-unit="months">–</span>
-			<span class="countdown-label">maanden</span>
-		</div>
-		<div class="countdown-item">
-			<span class="countdown-value" data-unit="days">–</span>
-			<span class="countdown-label">dagen</span>
-		</div>
-		<div class="countdown-item">
-			<span class="countdown-value" data-unit="hours">–</span>
-			<span class="countdown-label">uren</span>
-		</div>
-		<div class="countdown-item">
-			<span class="countdown-value" data-unit="minutes">–</span>
-			<span class="countdown-label">minuten</span>
-		</div>
-		<div class="countdown-item">
-			<span class="countdown-value" data-unit="seconds">–</span>
-			<span class="countdown-label">seconden</span>
+		<div class="bc" role="group" aria-label="Aftellen naar onze trouwdag">
+			<span class="bc-engrave" aria-hidden="true">19.06.27</span>
+			<span class="bc-side bc-side-left" aria-hidden="true"></span>
+			<span class="bc-side bc-side-right" aria-hidden="true"></span>
+
+			<div class="bc-screen">
+				<div class="bc-status" aria-hidden="true">
+					<span class="bc-clock" data-clock>--:--</span>
+					<span class="bc-status-icons">
+						<svg viewBox="0 0 16 16" width="15" height="15"><path fill="currentColor" d="M8 14.5 1.9 8.6A3.6 3.6 0 0 1 8 3.6a3.6 3.6 0 0 1 6.1 5Z" /></svg>
+						<svg viewBox="0 0 16 16" width="15" height="15"><path fill="currentColor" d="M14.5 1.5 1.5 7.2l5.6 1.7 1.7 5.6Z" /></svg>
+					</span>
+					<span class="bc-battery">100% <i></i></span>
+				</div>
+
+				<div class="bc-body">
+					<div class="bc-fields">
+						<div class="bc-field bc-wide bc-yellow">
+							<span class="bc-label">Dagen te gaan</span>
+							<span class="bc-value bc-xl" data-unit="days">–</span>
+						</div>
+						<div class="bc-field bc-green">
+							<span class="bc-label">Uren</span>
+							<span class="bc-value" data-unit="hours">–</span>
+						</div>
+						<div class="bc-field">
+							<span class="bc-label">Minuten</span>
+							<span class="bc-value" data-unit="minutes">–</span>
+						</div>
+						<div class="bc-field bc-grade" data-grade>
+							<span class="bc-label">Seconden</span>
+							<span class="bc-value" data-unit="seconds">–</span>
+						</div>
+						<div class="bc-field">
+							<span class="bc-label">Datum</span>
+							<span class="bc-value">{weddingDayMonth}<sup>{weddingYear}</sup></span>
+						</div>
+						<div class="bc-field bc-bars" aria-hidden="true">
+							{climb.map((h, i) => <i class:list={{ 'is-now': i >= climb.length - 2 }} style={`--h: ${h}%`} />)}
+						</div>
+						<div class="bc-field">
+							<span class="bc-label">Start</span>
+							<span class="bc-value">{weddingStart}</span>
+						</div>
+					</div>
+				</div>
+
+				<div class="bc-softkeys" aria-hidden="true">
+					<span>RSVP</span>
+					<span class="bc-softkey-mid">Programma</span>
+					<span>FAQ</span>
+				</div>
+			</div>
+
+			<nav class="bc-buttons" aria-label="Snelkoppelingen">
+				<a href="/rsvp" aria-label="RSVP"></a>
+				<a href="/programma" aria-label="Programma"></a>
+				<a href="/faq" aria-label="FAQ"></a>
+			</nav>
 		</div>
 	</section>
 </Layout>
 
 <script>
-	function addMonths(date: Date, months: number) {
-		const result = new Date(date);
-		const day = result.getDate();
-		result.setDate(1);
-		result.setMonth(result.getMonth() + months);
-		const lastDay = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
-		result.setDate(Math.min(day, lastDay));
-		return result;
+	const pad = (n: number) => String(n).padStart(2, '0');
+
+	// Wall-clock time in Brussels as a plain number, so the countdown matches what
+	// the clocks show (the daylight-saving switch in March would otherwise eat an hour).
+	const brussels = new Intl.DateTimeFormat('en-GB', {
+		timeZone: 'Europe/Brussels',
+		hourCycle: 'h23',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+	});
+	function wallClock(date: Date) {
+		const p = Object.fromEntries(brussels.formatToParts(date).map((x) => [x.type, Number(x.value)]));
+		return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
 	}
 
 	function updateCountdown() {
@@ -95,37 +154,26 @@ import {
 		if (!(section instanceof HTMLElement)) return;
 		const target = new Date(section.dataset.weddingDate ?? '');
 		const now = new Date();
-		const totalDiff = Math.max(0, target.getTime() - now.getTime());
+		const total = Math.floor(Math.max(0, wallClock(target) - wallClock(now)) / 1000);
 
-		// Show calendar months only while more than 31 days remain.
-		let months = 0;
-		let anchor = now;
-		if (totalDiff > 31 * 86400 * 1000) {
-			months =
-				(target.getFullYear() - now.getFullYear()) * 12 + (target.getMonth() - now.getMonth());
-			anchor = addMonths(now, months);
-			if (anchor > target) {
-				months--;
-				anchor = addMonths(now, months);
-			}
-		}
-
-		const seconds = Math.floor(Math.max(0, target.getTime() - anchor.getTime()) / 1000);
-		const values = {
-			months,
-			days: Math.floor(seconds / 86400),
-			hours: Math.floor((seconds % 86400) / 3600),
-			minutes: Math.floor((seconds % 3600) / 60),
-			seconds: seconds % 60,
+		const values: Record<string, string> = {
+			days: String(Math.floor(total / 86400)),
+			hours: pad(Math.floor((total % 86400) / 3600)),
+			minutes: pad(Math.floor((total % 3600) / 60)),
+			seconds: pad(total % 60),
 		};
-
-		const monthsItem = section.querySelector('[data-item="months"]');
-		if (monthsItem instanceof HTMLElement) monthsItem.hidden = months === 0;
-
 		for (const [unit, value] of Object.entries(values)) {
 			const el = section.querySelector(`[data-unit="${unit}"]`);
-			if (el) el.textContent = String(value).padStart(2, '0');
+			if (el && el.textContent !== value) el.textContent = value;
 		}
+
+		// "Grade" wedge under the seconds fills up as the minute passes.
+		const grade = section.querySelector<HTMLElement>('[data-grade]');
+		grade?.style.setProperty('--p', String((59 - (total % 60)) / 59));
+
+		// Status-bar clock, like on the device.
+		const clock = section.querySelector('[data-clock]');
+		if (clock) clock.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
 	}
 
 	updateCountdown();
@@ -175,32 +223,274 @@ import {
 	.countdown {
 		display: flex;
 		justify-content: center;
-		gap: 1.5em;
-		flex-wrap: wrap;
-		padding: 2em 0 3em;
+		padding: 2.5em 0 3em;
 		border-top: 1px solid rgb(var(--gray-light));
 	}
-	.countdown-item {
+
+	/* --- Bike computer ------------------------------------------------- */
+	.bc {
+		--bc-yellow: #f6b80c;
+		--bc-green: #5cc93b;
+		--bc-orange: #f08c1a;
+		--bc-blue: #1e6fd9;
+		--bc-gap: #b9b9b9;
+
+		position: relative;
+		width: min(100%, 340px);
+		padding: 30px 14px 16px;
+		border-radius: 38px 38px 46px 46px;
+		background: linear-gradient(160deg, #3a3a3d, #1b1b1d 45%, #0e0e0f);
+		box-shadow:
+			inset 0 1px 1px rgb(255 255 255 / 0.15),
+			inset 0 -2px 4px rgb(0 0 0 / 0.6),
+			0 24px 40px -18px rgb(0 0 0 / 0.55);
+		font-family: 'Helvetica Neue', Arial, sans-serif;
+		color: #111;
+		user-select: none;
+	}
+	.bc-engrave {
+		position: absolute;
+		top: 8px;
+		left: 50%;
+		translate: -50% 0;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.25em;
+		color: rgb(255 255 255 / 0.28);
+	}
+	.bc-side {
+		position: absolute;
+		width: 5px;
+		height: 44px;
+		border-radius: 3px;
+		background: #121213;
+	}
+	.bc-side-left {
+		left: -4px;
+		top: 22%;
+	}
+	.bc-side-right {
+		right: -4px;
+		top: 56%;
+	}
+
+	.bc-screen {
+		overflow: hidden;
+		border-radius: 6px;
+		background: var(--bc-gap);
+		box-shadow: 0 0 0 4px #050505;
+	}
+
+	.bc-status {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 6px 10px;
+		background: #000;
+		color: #fff;
+		font-size: 0.95rem;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+	.bc-status-icons {
+		display: flex;
+		gap: 6px;
+	}
+	.bc-battery {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+	.bc-battery i {
+		position: relative;
+		width: 20px;
+		height: 10px;
+		border: 1.5px solid #fff;
+		border-radius: 2px;
+		background: linear-gradient(#fff, #fff) 1px 1px / calc(100% - 2px) calc(100% - 2px) no-repeat;
+	}
+	.bc-battery i::after {
+		content: '';
+		position: absolute;
+		right: -4px;
+		top: 2px;
+		width: 2px;
+		height: 4px;
+		border-radius: 0 1px 1px 0;
+		background: #fff;
+	}
+
+	.bc-fields {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 3px;
+		padding: 3px;
+		background: var(--bc-gap);
+	}
+	.bc-field {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		min-width: 4.5em;
+		justify-content: center;
+		min-height: 5.2rem;
+		padding: 0.35rem 0.25rem 0.2rem;
+		border-radius: 6px;
+		background: #fff;
+		overflow: hidden;
+		text-align: center;
 	}
-	.countdown-item[hidden] {
-		display: none;
+	.bc-wide {
+		grid-column: 1 / -1;
 	}
-	.countdown-value {
-		font-size: 2.5em;
-		font-weight: 700;
-		color: var(--accent);
+	.bc-yellow {
+		background: var(--bc-yellow);
+	}
+	.bc-green {
+		background: var(--bc-green);
+	}
+	.bc-label {
+		position: relative;
+		z-index: 1;
+		font-size: 1rem;
+		font-weight: 800;
 		line-height: 1;
-	}
-	.countdown-label {
-		margin-top: 0.4em;
-		font-size: 0.85em;
-		letter-spacing: 0.1em;
+		letter-spacing: 0.01em;
 		text-transform: uppercase;
-		color: rgb(var(--gray));
+	}
+	.bc-value {
+		position: relative;
+		z-index: 1;
+		font-size: 2.9rem;
+		font-weight: 800;
+		line-height: 0.95;
+		letter-spacing: -0.05em;
+		font-variant-numeric: tabular-nums;
+	}
+	.bc-xl {
+		font-size: 4.4rem;
+	}
+	.bc-value sup {
+		margin-left: 0.04em;
+		font-size: 0.5em;
+		vertical-align: 0.7em;
+		letter-spacing: -0.03em;
+	}
+
+	/* Orange "grade" wedge; --p (0–1) is set from the countdown script. */
+	.bc-grade::after {
+		content: '';
+		position: absolute;
+		left: 0;
+		bottom: 0;
+		width: calc(var(--p, 0) * 100%);
+		height: 34%;
+		background: var(--bc-orange);
+		clip-path: polygon(0 75%, 100% 0, 100% 100%, 0 100%);
+		transition: width 0.4s ease;
+	}
+
+	.bc-bars {
+		flex-direction: row;
+		align-items: flex-end;
+		gap: 3px;
+		padding: 0.5rem 0.6rem;
+	}
+	.bc-bars i {
+		flex: 1;
+		height: var(--h);
+		border-radius: 2px;
+		background: #b5b5b5;
+	}
+	.bc-bars i.is-now {
+		background: var(--bc-blue);
+	}
+
+	.bc-softkeys {
+		display: grid;
+		grid-template-columns: 1fr 1.3fr 1fr;
+		background: #000;
+	}
+	.bc-softkeys span {
+		position: relative;
+		padding: 0.35rem 0.25rem;
+		color: #fff;
+		font-size: 0.95rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-align: center;
+		text-transform: uppercase;
+		transition: color 0.15s ease;
+	}
+	/* Hovering/focusing a hardware button lights up its label on screen. */
+	.bc:has(.bc-buttons a:nth-child(1):is(:hover, :focus-visible)) .bc-softkeys span:nth-child(1),
+	.bc:has(.bc-buttons a:nth-child(2):is(:hover, :focus-visible)) .bc-softkeys span:nth-child(2),
+	.bc:has(.bc-buttons a:nth-child(3):is(:hover, :focus-visible)) .bc-softkeys span:nth-child(3) {
+		color: var(--bc-yellow);
+	}
+	/* Slanted separators around the middle key. */
+	.bc-softkey-mid::before,
+	.bc-softkey-mid::after {
+		content: '';
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		width: 1px;
+		background: #555;
+	}
+	.bc-softkey-mid::before {
+		left: 0;
+		transform: skewX(-25deg);
+	}
+	.bc-softkey-mid::after {
+		right: 0;
+		transform: skewX(25deg);
+	}
+
+	/* Three textured hardware buttons. */
+	.bc-buttons {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: 10px;
+		margin-top: 26px;
+		padding: 0 4px;
+	}
+	.bc-buttons a {
+		display: block;
+		height: 46px;
+		cursor: pointer;
+		transition: translate 0.08s ease, filter 0.15s ease;
+		border-radius: 12px 12px 18px 18px;
+		background:
+			repeating-linear-gradient(45deg, rgb(255 255 255 / 0.07) 0 2px, transparent 2px 6px),
+			repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.07) 0 2px, transparent 2px 6px),
+			linear-gradient(#2c2c2e, #171718);
+		box-shadow:
+			inset 0 1px 1px rgb(255 255 255 / 0.12),
+			0 2px 3px rgb(0 0 0 / 0.5);
+	}
+	.bc-buttons a:hover {
+		filter: brightness(1.25);
+	}
+	.bc-buttons a:active {
+		translate: 0 2px;
+		box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.6);
+	}
+	.bc-buttons a:focus-visible {
+		outline: 3px solid var(--bc-yellow);
+		outline-offset: 3px;
+	}
+
+	@media (max-width: 360px) {
+		.bc-value {
+			font-size: 2.4rem;
+		}
+		.bc-xl {
+			font-size: 3.6rem;
+		}
+		.bc-label {
+			font-size: 0.85rem;
+		}
 	}
 	@media (max-width: 480px) {
 		.hero h1 {
