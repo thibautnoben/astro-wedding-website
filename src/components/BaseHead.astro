@@ -2,9 +2,10 @@
 // Import the global.css file here so that it is included on
 // all pages through the use of the <BaseHead /> component.
 // Main font: Open Sauce Sans (self-hosted via Fontsource; Latin subset, regular + bold).
-import '@fontsource/open-sauce-sans/latin-400.css';
+// Regular is declared in global.css from the .woff file: Fontsource ships a broken
+// open-sauce-sans-latin-400-normal.woff2 (a PostScript font, not WOFF2) up to at least 5.3.0.
 import '@fontsource/open-sauce-sans/latin-700.css';
-import openSauceRegular from '@fontsource/open-sauce-sans/files/open-sauce-sans-latin-400-normal.woff2?url';
+import openSauceRegular from '@fontsource/open-sauce-sans/files/open-sauce-sans-latin-400-normal.woff?url';
 import openSauceBold from '@fontsource/open-sauce-sans/files/open-sauce-sans-latin-700-normal.woff2?url';
 import '../styles/global.css';
 
@@ -27,7 +28,7 @@ const { title, description, image = '/og-image.jpg' } = Astro.props;
 <meta name="generator" content={Astro.generator} />
 
 <!-- Font preloads -->
-<link rel="preload" href={openSauceRegular} as="font" type="font/woff2" crossorigin />
+<link rel="preload" href={openSauceRegular} as="font" type="font/woff" crossorigin />
 <link rel="preload" href={openSauceBold} as="font" type="font/woff2" crossorigin />
 
 <!-- Canonical URL -->
