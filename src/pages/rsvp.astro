@@ -4,139 +4,563 @@ export const prerender = false;
 import { env } from 'cloudflare:workers';
 import Layout from '../layouts/Layout.astro';
 import HeartAccent from '../components/HeartAccent.astro';
-import { CONTACT_EMAIL, RSVP_DEADLINE_LABEL } from '../consts';
+import { CONTACT_EMAIL, RSVP_DEADLINE_LABEL, RSVP_MAX_PERSONS, RSVP_NOTIFY_EMAIL } from '../consts';
+import {
+	LIMITS,
+	emptyValues,
+	isClosed,
+	isSameOrigin,
+	parseForm,
+	personField,
+	saveRsvp,
+	sendRsvpEmails,
+	verifyTurnstile,
+	type FieldErrors,
+	type RsvpSummary,
+} from '../lib/rsvp';
 
-const status = Astro.url.searchParams.get('status');
+const SUMMARY_COOKIE = 'rsvp_done';
+const closed = isClosed();
+let values = emptyValues();
+let errors: FieldErrors = {};
+let formError = '';
+
+// --- Handle a submission ------------------------------------------------------
+// On success: store a short summary in a cookie and redirect (POST → redirect → GET),
+// so refreshing the page never resubmits. On failure: re-render the form with the
+// visitor's input kept and the problems explained.
+if (Astro.request.method === 'POST') {
+	if (closed) {
+		formError = `Het RSVP-formulier is afgesloten sinds ${RSVP_DEADLINE_LABEL}.`;
+	} else if (!isSameOrigin(Astro.request)) {
+		console.warn('RSVP: rejected cross-origin submission');
+		formError = 'Er ging iets mis bij het versturen. Probeer het opnieuw.';
+	} else {
+		const form = await Astro.request.formData();
+		// Honeypot: invisible to people, bots fill it in. Pretend success so they don't retry.
+		if (String(form.get('website') ?? '').trim()) {
+			return Astro.redirect('/rsvp?status=success', 303);
+		}
+
+		({ values, errors } = parseForm(form));
+		if (Object.keys(errors).length) {
+			console.warn(`RSVP: validation failed for fields ${Object.keys(errors).join(', ')}`);
+			formError = 'Kijk de gemarkeerde velden even na.';
+		} else if (
+			!(await verifyTurnstile(
+				env.TURNSTILE_SECRET_KEY,
+				String(form.get('cf-turnstile-response') ?? ''),
+				Astro.request.headers.get('CF-Connecting-IP'),
+			))
+		) {
+			formError = 'De controle tegen spam is niet gelukt. Wacht even tot de controle klaar is en probeer opnieuw.';
+		} else {
+			try {
+				const { updated } = await saveRsvp(env.DB, values);
+				const origin = new URL(Astro.request.url).origin;
+				Astro.locals.cfContext.waitUntil(
+					sendRsvpEmails(env.RESEND_API_KEY, RSVP_NOTIFY_EMAIL, values, updated, origin),
+				);
+				const summary: RsvpSummary = {
+					naam: values.naam,
+					aanwezig: values.aanwezig as 'ja' | 'nee',
+					personen: values.aanwezig === 'ja' ? values.personen.filter((p, i) => i === 0 || p.naam) : [],
+					updated,
+				};
+				Astro.cookies.set(SUMMARY_COOKIE, summary, {
+					path: '/rsvp',
+					httpOnly: true,
+					sameSite: 'lax',
+					secure: Astro.url.protocol === 'https:',
+					maxAge: 600,
+				});
+				return Astro.redirect('/rsvp?status=success', 303);
+			} catch (error) {
+				console.error('RSVP: saving failed:', String(error));
+				formError = `Er ging iets mis bij het opslaan. Probeer het opnieuw of mail naar ${CONTACT_EMAIL}.`;
+			}
+		}
+	}
+	Astro.response.status = 400;
+}
+
+// --- Success screen (after the redirect) --------------------------------------
+const succeeded = Astro.request.method === 'GET' && Astro.url.searchParams.get('status') === 'success';
+let summary: RsvpSummary | undefined;
+if (succeeded) {
+	try {
+		summary = Astro.cookies.get(SUMMARY_COOKIE)?.json() as RsvpSummary | undefined;
+	} catch {
+		summary = undefined;
+	}
+	Astro.cookies.delete(SUMMARY_COOKIE, { path: '/rsvp' });
+}
+
+const showForm = !succeeded && !closed;
 const turnstileSiteKey = env.TURNSTILE_SITE_KEY;
+
+const errorId = (field: string) => `${field}-error`;
+const invalid = (field: string) => (errors[field] ? 'true' : undefined);
+const describedBy = (field: string, ...extra: string[]) =>
+	[...extra, errors[field] ? errorId(field) : ''].filter(Boolean).join(' ') || undefined;
+const errorList = Object.entries(errors);
 ---
 
 <Layout title="RSVP" description={`Laat ons voor ${RSVP_DEADLINE_LABEL} weten of je erbij kan zijn.`}>
 	<span class="eyebrow"><HeartAccent /> RSVP <HeartAccent /></span>
 	<h1>We willen je er graag bij!</h1>
-	<p>
-		Laat ons voor <strong>{RSVP_DEADLINE_LABEL}</strong> weten of je erbij kan zijn. Heb je toch nog
-		vragen, mail dan naar <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
-	</p>
 
 	{
-		status === 'success' && (
-			<p class="notice notice-success">Bedankt! We hebben je RSVP goed ontvangen.</p>
+		succeeded && (
+			<section class="card result" role="status" tabindex="-1" data-focus>
+				{summary ? (
+					<>
+						<h2>Bedankt, {summary.naam}!</h2>
+						{summary.aanwezig === 'ja' ? (
+							<>
+								<p>
+									{summary.updated ? 'We hebben je antwoord bijgewerkt. ' : ''}
+									{summary.personen.length === 1
+										? 'Leuk dat je erbij bent!'
+										: `Leuk dat jullie er met ${summary.personen.length} bij zijn!`}
+								</p>
+								<ul class="result-people">
+									{summary.personen.map((person) => (
+										<li>
+											<strong>{person.naam}</strong>
+											{person.dieet && <span> — {person.dieet}</span>}
+										</li>
+									))}
+								</ul>
+							</>
+						) : (
+							<p>
+								{summary.updated ? 'We hebben je antwoord bijgewerkt. ' : ''}
+								Jammer dat je er niet bij kan zijn, bedankt om het ons te laten weten.
+							</p>
+						)}
+						<p>We hebben je een bevestiging gemaild.</p>
+					</>
+				) : (
+					<p>Bedankt! We hebben je RSVP goed ontvangen.</p>
+				)}
+				{!closed && (
+					<p class="result-change">
+						Iets vergeten of veranderd? <a href="/rsvp">Pas je antwoord aan</a> met hetzelfde e-mailadres.
+					</p>
+				)}
+			</section>
 		)
 	}
+
 	{
-		status === 'error' && (
-			<p class="notice notice-error">
-				Er ging iets mis bij het versturen. Probeer het opnieuw of mail naar {CONTACT_EMAIL}.
-			</p>
+		!succeeded && closed && (
+			<section class="card result" role="status">
+				<h2>Het RSVP-formulier is afgesloten</h2>
+				<p>
+					We vroegen om te antwoorden voor {RSVP_DEADLINE_LABEL}. Wil je ons nog iets laten weten? Mail dan
+					naar <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
+				</p>
+			</section>
 		)
 	}
 
-	<form class="card" method="POST" action="/api/rsvp">
-		<div class="field honeypot" aria-hidden="true">
-			<label for="website">Laat dit veld leeg</label>
-			<input type="text" id="website" name="website" tabindex="-1" autocomplete="off" />
-		</div>
+	{
+		showForm && (
+			<>
+				<p>
+					Laat ons voor <strong>{RSVP_DEADLINE_LABEL}</strong> weten of je erbij kan zijn. Al geantwoord? Vul het
+					formulier opnieuw in met hetzelfde e-mailadres om je antwoord aan te passen. Vragen? Mail naar{' '}
+					<a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
+				</p>
 
-		<div class="field">
-			<label for="naam">Naam*</label>
-			<input type="text" id="naam" name="naam" required maxlength="100" />
-		</div>
+				{formError && (
+					<div class="notice notice-error" role="alert" tabindex="-1" data-focus>
+						<p>{formError}</p>
+						{errorList.length > 0 && (
+							<ul>
+								{errorList.map(([field, message]) => (
+									<li>
+										<a href={`#${field === 'aanwezig' ? 'aanwezig-ja' : field}`}>{message}</a>
+									</li>
+								))}
+							</ul>
+						)}
+					</div>
+				)}
 
-		<div class="field">
-			<label for="email">E-mail*</label>
-			<input
-				type="email"
-				id="email"
-				name="email"
-				required
-				maxlength="254"
-				pattern="[^\s@]+@[^\s@]+\.[^\s@]+"
-				aria-describedby="email-error"
-			/>
-			<span id="email-error" class="field-error" hidden>Vul een geldig e-mailadres in.</span>
-		</div>
+				<form class="card" method="POST" action="/rsvp" data-rsvp>
+					<p class="required-note">
+						Velden met <span aria-hidden="true">*</span>
+						<span class="visually-hidden">een sterretje</span> zijn verplicht.
+					</p>
 
-		<fieldset class="field">
-			<legend>Ben je erbij?*</legend>
-			<label class="radio"><input type="radio" name="aanwezig" value="ja" required /> Ja, graag!</label>
-			<label class="radio"><input type="radio" name="aanwezig" value="nee" required /> Helaas, ik kan niet.</label>
-		</fieldset>
+					<div class="field honeypot" aria-hidden="true">
+						<label for="website">Laat dit veld leeg</label>
+						<input type="text" id="website" name="website" tabindex="-1" autocomplete="off" />
+					</div>
 
-		<div class="field">
-			<label for="aantal_gasten">Aantal gasten (inclusief jezelf)</label>
-			<input type="number" id="aantal_gasten" name="aantal_gasten" min="1" max="20" value="1" />
-		</div>
+					<div class="field">
+						<label for="naam">
+							Naam <span class="req" aria-hidden="true">*</span>
+						</label>
+						<input
+							type="text"
+							id="naam"
+							name="naam"
+							required
+							maxlength={LIMITS.naam}
+							autocomplete="name"
+							value={values.naam}
+							aria-invalid={invalid('naam')}
+							aria-describedby={describedBy('naam')}
+						/>
+						{errors.naam && <span id={errorId('naam')} class="field-error">{errors.naam}</span>}
+					</div>
 
-		<div class="field">
-			<label for="dieetwensen">Dieetwensen of allergieën</label>
-			<textarea id="dieetwensen" name="dieetwensen" rows="3" maxlength="500"></textarea>
-		</div>
+					<div class="field">
+						<label for="email">
+							E-mail <span class="req" aria-hidden="true">*</span>
+						</label>
+						<input
+							type="email"
+							id="email"
+							name="email"
+							required
+							maxlength={LIMITS.email}
+							autocomplete="email"
+							pattern="[^\s@]+@[^\s@]+\.[^\s@]+"
+							value={values.email}
+							aria-invalid={invalid('email')}
+							aria-describedby={describedBy('email', 'email-hint')}
+						/>
+						<span id="email-hint" class="hint">Hier sturen we je bevestiging naartoe.</span>
+						<span id={errorId('email')} class="field-error" data-email-error hidden={!errors.email}>
+							{errors.email ?? 'Vul een geldig e-mailadres in.'}
+						</span>
+					</div>
 
-		<div class="field">
-			<label for="dansnummer">Met welk nummer krijgen we jou op de dansvloer?</label>
-			<input type="text" id="dansnummer" name="dansnummer" maxlength="200" />
-		</div>
+					<fieldset class="field" aria-describedby={describedBy('aanwezig')}>
+						<legend>
+							Ben je erbij? <span class="req" aria-hidden="true">*</span>
+						</legend>
+						<div class="choices">
+							<label class="choice">
+								<input
+									type="radio"
+									id="aanwezig-ja"
+									name="aanwezig"
+									value="ja"
+									required
+									checked={values.aanwezig === 'ja'}
+								/>
+								Ja, graag!
+							</label>
+							<label class="choice">
+								<input type="radio" name="aanwezig" value="nee" required checked={values.aanwezig === 'nee'} />
+								Helaas, ik kan niet.
+							</label>
+						</div>
+						{errors.aanwezig && (
+							<span id={errorId('aanwezig')} class="field-error">
+								{errors.aanwezig}
+							</span>
+						)}
+					</fieldset>
 
-		<div class="field">
-			<label for="bericht">Bericht voor het bruidspaar</label>
-			<textarea id="bericht" name="bericht" rows="3" maxlength="1000"></textarea>
-		</div>
+					<fieldset class="field only-yes people">
+						<legend>Wie komt er?</legend>
+						<p class="hint">
+							Vul voor iedereen die meekomt de naam in, met eventuele dieetwensen of allergieën (maximaal{' '}
+							{RSVP_MAX_PERSONS} personen, jezelf inbegrepen).
+						</p>
 
-		<div class="cf-turnstile" data-sitekey={turnstileSiteKey}></div>
+						{values.personen.map((person, i) => {
+							const nameField = personField(i, 'naam');
+							const dietField = personField(i, 'dieet');
+							return (
+								<div class="person" data-person={i + 1} data-extra={i > 0 ? '' : undefined}>
+									<div class="person-head">
+										{i === 0 ? (
+											<span class="person-title">
+												Jij <span class="person-self" data-self-name />
+											</span>
+										) : (
+											<>
+												<span class="person-title">Persoon {i + 1}</span>
+												<button type="button" class="link-button" data-remove hidden>
+													Verwijderen<span class="visually-hidden"> (persoon {i + 1})</span>
+												</button>
+											</>
+										)}
+									</div>
+									{i > 0 && (
+										<div class="field">
+											<label for={nameField}>Naam</label>
+											<input
+												type="text"
+												id={nameField}
+												name={nameField}
+												maxlength={LIMITS.naam}
+												autocomplete="off"
+												value={person.naam}
+												aria-invalid={invalid(nameField)}
+												aria-describedby={describedBy(nameField)}
+											/>
+											{errors[nameField] && (
+												<span id={errorId(nameField)} class="field-error">
+													{errors[nameField]}
+												</span>
+											)}
+										</div>
+									)}
+									<div class="field">
+										<label for={dietField}>Dieetwensen of allergieën</label>
+										<input
+											type="text"
+											id={dietField}
+											name={dietField}
+											maxlength={LIMITS.dieet}
+											autocomplete="off"
+											placeholder="Bv. vegetarisch, notenallergie"
+											value={person.dieet}
+										/>
+									</div>
+								</div>
+							);
+						})}
 
-		<button type="submit" class="btn btn-solid">Versturen</button>
-	</form>
+						<button type="button" class="btn btn-small" data-add-person hidden>
+							+ Persoon toevoegen
+						</button>
+					</fieldset>
+
+					<div class="field only-yes">
+						<label for="dansnummer">Met welk nummer krijgen we jou op de dansvloer?</label>
+						<input
+							type="text"
+							id="dansnummer"
+							name="dansnummer"
+							maxlength={LIMITS.dansnummer}
+							value={values.dansnummer}
+						/>
+					</div>
+
+					<div class="field">
+						<label for="bericht">Bericht voor het bruidspaar</label>
+						<textarea id="bericht" name="bericht" rows="4" maxlength={LIMITS.bericht}>{values.bericht}</textarea>
+					</div>
+
+					<div
+						class="cf-turnstile"
+						data-sitekey={turnstileSiteKey}
+						data-language="nl"
+						data-theme="light"
+						data-appearance="interaction-only"
+						data-action="rsvp"
+					/>
+
+					<div class="submit-row">
+						<button type="submit" class="btn btn-solid" data-submit>
+							Versturen
+						</button>
+						<span class="hint" data-submit-hint aria-live="polite" hidden>
+							Even geduld, we controleren of je geen robot bent…
+						</span>
+					</div>
+				</form>
+
+				<script is:inline src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+			</>
+		)
+	}
 </Layout>
 
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-
 <script>
-	const emailInput = document.querySelector<HTMLInputElement>('#email');
-	const emailError = document.querySelector<HTMLElement>('#email-error');
+	// Move focus to the success/error message so screen readers announce it.
+	document.querySelector<HTMLElement>('[data-focus]')?.focus();
 
-	function validateEmail() {
-		if (!emailInput || !emailError) return;
-		emailInput.setCustomValidity('');
-		const isValid = emailInput.validity.valid;
-		emailInput.setCustomValidity(isValid ? '' : 'Vul een geldig e-mailadres in.');
-		emailError.hidden = isValid;
-		emailInput.setAttribute('aria-invalid', String(!isValid));
+	const form = document.querySelector<HTMLFormElement>('form[data-rsvp]');
+	if (form) {
+		// --- E-mail validation while typing ---
+		const emailInput = form.querySelector<HTMLInputElement>('#email');
+		const emailError = form.querySelector<HTMLElement>('[data-email-error]');
+		const validateEmail = () => {
+			if (!emailInput || !emailError) return;
+			emailInput.setCustomValidity('');
+			const valid = emailInput.validity.valid;
+			emailInput.setCustomValidity(valid ? '' : 'Vul een geldig e-mailadres in.');
+			if (!valid) emailError.textContent = 'Vul een geldig e-mailadres in.';
+			emailError.hidden = valid;
+			emailInput.setAttribute('aria-invalid', String(!valid));
+			const ids = new Set((emailInput.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean));
+			if (valid) ids.delete(emailError.id);
+			else ids.add(emailError.id);
+			emailInput.setAttribute('aria-describedby', [...ids].join(' '));
+		};
+		emailInput?.addEventListener('input', validateEmail);
+		emailInput?.addEventListener('blur', validateEmail);
+
+		// --- "Jij (name)" mirrors the name field ---
+		const nameInput = form.querySelector<HTMLInputElement>('#naam');
+		const selfName = form.querySelector<HTMLElement>('[data-self-name]');
+		const syncSelf = () => {
+			if (selfName) selfName.textContent = nameInput?.value.trim() ? `(${nameInput.value.trim()})` : '';
+		};
+		nameInput?.addEventListener('input', syncSelf);
+		syncSelf();
+
+		// --- Extra people: show one row at a time ---
+		const rows = [...form.querySelectorAll<HTMLElement>('[data-extra]')];
+		const addButton = form.querySelector<HTMLButtonElement>('[data-add-person]');
+		const isEmpty = (row: HTMLElement) => [...row.querySelectorAll('input')].every((input) => !input.value.trim());
+		const syncAdd = () => {
+			if (addButton) addButton.hidden = rows.every((row) => !row.hidden);
+		};
+		rows.forEach((row) => {
+			if (isEmpty(row) && !row.querySelector('[aria-invalid="true"]')) row.hidden = true;
+			const remove = row.querySelector<HTMLButtonElement>('[data-remove]');
+			if (!remove) return;
+			remove.hidden = false;
+			remove.addEventListener('click', () => {
+				row.querySelectorAll('input').forEach((input) => (input.value = ''));
+				row.hidden = true;
+				syncAdd();
+				addButton?.focus();
+			});
+		});
+		addButton?.addEventListener('click', () => {
+			const next = rows.find((row) => row.hidden);
+			if (next) {
+				next.hidden = false;
+				next.querySelector('input')?.focus();
+			}
+			syncAdd();
+		});
+		syncAdd();
+
+		// --- Submit: wait for the spam check, prevent double submits ---
+		const submit = form.querySelector<HTMLButtonElement>('[data-submit]');
+		const hint = form.querySelector<HTMLElement>('[data-submit-hint]');
+		const tokenInput = () => form.querySelector<HTMLInputElement>('[name="cf-turnstile-response"]');
+		const started = Date.now();
+		let sending = false;
+
+		const updateSubmit = () => {
+			if (!submit || sending) return;
+			// If the check never loads (e.g. blocked by an extension), let people try anyway after 15s;
+			// the server then explains what went wrong and keeps their answers.
+			const ready = Boolean(tokenInput()?.value) || Date.now() - started > 15000;
+			submit.disabled = !ready;
+			if (hint) hint.hidden = ready;
+		};
+		if (form.querySelector('.cf-turnstile')) {
+			updateSubmit();
+			setInterval(updateSubmit, 300);
+		}
+
+		form.addEventListener('submit', (event) => {
+			if (sending) {
+				event.preventDefault();
+				return;
+			}
+			sending = true;
+			if (submit) {
+				submit.disabled = true;
+				submit.textContent = 'Versturen…';
+			}
+			form.setAttribute('aria-busy', 'true');
+		});
+
+		// Coming back via the browser's back button: make the form usable again.
+		window.addEventListener('pageshow', (event) => {
+			if (!event.persisted) return;
+			sending = false;
+			if (submit) submit.textContent = 'Versturen';
+			form.removeAttribute('aria-busy');
+			updateSubmit();
+		});
 	}
-
-	emailInput?.addEventListener('input', validateEmail);
-	emailInput?.addEventListener('blur', validateEmail);
 </script>
 
 <style>
 	.notice {
-		padding: 1em;
-		border-radius: 8px;
+		margin: 1.5em 0;
+		padding: 1em 1.25em;
+		border-radius: 10px;
 	}
-	.notice-success {
-		background: rgba(178, 106, 58, 0.15);
-		color: var(--accent-dark);
+	.notice p {
+		margin: 0;
+	}
+	.notice ul {
+		margin: 0.5em 0 0;
+		padding-left: 1.2em;
 	}
 	.notice-error {
 		background: rgba(178, 58, 58, 0.1);
 		color: #8a2c2c;
 	}
-	.field-error {
-		color: #8a2c2c;
-		font-size: 0.9em;
+	.notice-error a {
+		color: inherit;
 	}
+	.notice:focus,
+	.result:focus {
+		outline: 3px solid var(--accent);
+		outline-offset: 3px;
+	}
+
+	.result {
+		margin-top: 2em;
+	}
+	.result h2 {
+		margin-bottom: 0.5em;
+	}
+	.result-people {
+		padding-left: 1.2em;
+	}
+	.result-change {
+		margin-bottom: 0;
+		color: rgb(var(--gray-dark));
+	}
+
 	form {
 		margin-top: 2em;
 		display: flex;
 		flex-direction: column;
-		gap: 1.25em;
+		gap: 1.4em;
+	}
+	.required-note {
+		margin: 0;
+		font-size: 0.9em;
+		color: rgb(var(--gray));
+	}
+	.req {
+		color: var(--accent);
 	}
 	.field {
 		display: flex;
 		flex-direction: column;
 		gap: 0.4em;
+		min-width: 0;
 		border: none;
 		padding: 0;
 		margin: 0;
+	}
+	.field legend {
+		font-weight: 700;
+		padding: 0;
+		margin-bottom: 0.4em;
+	}
+	label {
+		font-weight: 700;
+	}
+	.hint {
+		font-size: 0.9em;
+		color: rgb(var(--gray));
+	}
+	.field-error {
+		color: #8a2c2c;
+		font-size: 0.9em;
 	}
 	.honeypot {
 		position: absolute;
@@ -145,38 +569,154 @@ const turnstileSiteKey = env.TURNSTILE_SITE_KEY;
 		overflow: hidden;
 		left: -9999px;
 	}
-	.field legend {
-		font-weight: 700;
-		padding: 0;
-		margin-bottom: 0.2em;
+	.visually-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
-	label {
-		font-weight: 700;
-	}
-	.radio {
-		display: flex;
-		align-items: center;
-		gap: 0.5em;
-		font-weight: 400;
-	}
+
 	input[type='text'],
 	input[type='email'],
-	input[type='number'],
 	textarea {
-		font-family: inherit;
+		width: 100%;
+		box-sizing: border-box;
+		font: inherit;
 		padding: 0.6em 0.75em;
 		border: 1px solid rgb(var(--gray-light));
 		border-radius: 8px;
+		background: #fff;
 		color: rgb(var(--gray-dark));
+	}
+	input:focus-visible,
+	textarea:focus-visible {
+		outline: 2px solid var(--accent);
+		outline-offset: 1px;
+	}
+	/* Only resizable vertically, between sensible limits. */
+	textarea {
+		resize: vertical;
+		min-height: 5.5em;
+		max-height: 20em;
 	}
 	input[aria-invalid='true'] {
 		border-color: #8a2c2c;
 	}
-	button {
+
+	/* Yes / no as two large choices. */
+	.choices {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(12em, 1fr));
+		gap: 0.75em;
+	}
+	.choice {
+		display: flex;
+		align-items: center;
+		gap: 0.6em;
+		padding: 0.85em 1em;
+		border: 2px solid rgb(var(--gray-light));
+		border-radius: 10px;
+		background: #fff;
+		font-weight: 400;
+		cursor: pointer;
+		transition: border-color 0.15s ease, background-color 0.15s ease;
+	}
+	.choice input {
+		accent-color: var(--accent);
+		width: 1.1em;
+		height: 1.1em;
+		margin: 0;
+	}
+	.choice:has(input:checked) {
+		border-color: var(--accent);
+		background: rgba(178, 106, 58, 0.08);
+		font-weight: 700;
+	}
+	.choice:has(input:focus-visible) {
+		outline: 2px solid var(--accent);
+		outline-offset: 2px;
+	}
+
+	/* People, diet and dance song only matter for a "yes". Without :has() support
+	   (very old browsers) they simply stay visible. */
+	@supports selector(:has(*)) {
+		.only-yes {
+			display: none;
+		}
+		form:has(input[name='aanwezig'][value='ja']:checked) .only-yes {
+			display: flex;
+		}
+	}
+
+	.people {
+		gap: 0.75em;
+	}
+	.people .hint {
+		margin: 0;
+	}
+	.person {
+		display: flex;
+		flex-direction: column;
+		gap: 0.6em;
+		padding: 0.9em 1em 1em;
+		border: 1px solid rgb(var(--gray-light));
+		border-radius: 10px;
+		background: rgba(var(--gray-light), 0.25);
+	}
+	.person[hidden] {
+		display: none;
+	}
+	.person-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1em;
+	}
+	.person-title {
+		font-weight: 700;
+	}
+	.person-self {
+		font-weight: 400;
+		color: rgb(var(--gray));
+	}
+	.person .field label {
+		font-weight: 400;
+		font-size: 0.95em;
+	}
+	.link-button {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--accent-dark);
+		font: inherit;
+		font-size: 0.9em;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	.btn-small {
 		align-self: flex-start;
+		padding: 0.5em 1.1em;
+		font-size: 0.95rem;
+		background: transparent;
+		cursor: pointer;
+	}
+
+	.submit-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.75em 1em;
+	}
+	button[type='submit'] {
 		font-size: 1rem;
 		cursor: pointer;
 		border-width: 2px;
 		border-style: solid;
+	}
+	button[type='submit']:disabled {
+		opacity: 0.6;
+		cursor: wait;
 	}
 </style>
