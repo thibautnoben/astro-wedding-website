@@ -1,0 +1,231 @@
+---
+// Overview of all RSVPs for the couple. Protected by Cloudflare Access: see src/lib/access.ts
+// for the setup. Without a valid Access login this page answers 404.
+export const prerender = false;
+
+import { env } from 'cloudflare:workers';
+import Layout from '../../layouts/Layout.astro';
+import { verifyAccess } from '../../lib/access';
+import type { Person } from '../../lib/rsvp';
+
+const user = await verifyAccess(Astro.request, env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
+if (!user) {
+	return new Response('Not found', { status: 404, headers: { 'Cache-Control': 'no-store' } });
+}
+Astro.response.headers.set('Cache-Control', 'private, no-store');
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+
+type Row = {
+	id: number;
+	naam: string;
+	email: string | null;
+	aanwezig: string;
+	aantal_gasten: number;
+	personen: string | null;
+	dieetwensen: string | null;
+	dansnummer: string | null;
+	bericht: string | null;
+	created_at: string;
+	updated_at: string | null;
+};
+
+const { results } = await env.DB.prepare(
+	'SELECT * FROM rsvps ORDER BY COALESCE(updated_at, created_at) DESC',
+).all<Row>();
+
+// Older RSVPs (before per-person names) only have a count and a combined diet text.
+function peopleOf(row: Row): Person[] {
+	if (row.aanwezig !== 'ja') return [];
+	if (row.personen) {
+		try {
+			return JSON.parse(row.personen) as Person[];
+		} catch {
+			/* fall through */
+		}
+	}
+	const extra = Math.max(0, (row.aantal_gasten || 1) - 1);
+	return [
+		{ naam: row.naam, dieet: row.dieetwensen ?? '' },
+		...Array.from({ length: extra }, (_, i) => ({ naam: `(gast ${i + 2})`, dieet: '' })),
+	];
+}
+
+const rows = results.map((row) => ({ ...row, people: peopleOf(row) }));
+const yes = rows.filter((row) => row.aanwezig === 'ja');
+const totals = {
+	answers: rows.length,
+	yes: yes.length,
+	no: rows.length - yes.length,
+	people: yes.reduce((sum, row) => sum + row.people.length, 0),
+};
+const diets = yes.flatMap((row) => row.people.filter((person) => person.dieet));
+const songs = yes.filter((row) => row.dansnummer).map((row) => ({ naam: row.naam, song: row.dansnummer! }));
+
+const when = (value: string) =>
+	new Intl.DateTimeFormat('nl-BE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Brussels' }).format(
+		new Date(`${value.replace(' ', 'T')}Z`),
+	);
+---
+
+<Layout title="RSVP-overzicht" description="Overzicht van alle antwoorden.">
+	<h1>RSVP-overzicht</h1>
+	<p class="signed-in">Ingelogd als {user.email}</p>
+
+	<dl class="totals">
+		<div><dt>Antwoorden</dt><dd>{totals.answers}</dd></div>
+		<div><dt>Komen</dt><dd>{totals.yes}</dd></div>
+		<div><dt>Komen niet</dt><dd>{totals.no}</dd></div>
+		<div class="highlight"><dt>Personen</dt><dd>{totals.people}</dd></div>
+	</dl>
+
+	{
+		diets.length > 0 && (
+			<section>
+				<h2>Dieetwensen en allergieën</h2>
+				<ul>
+					{diets.map((person) => (
+						<li>
+							<strong>{person.naam}</strong>: {person.dieet}
+						</li>
+					))}
+				</ul>
+			</section>
+		)
+	}
+
+	{
+		songs.length > 0 && (
+			<section>
+				<h2>Dansnummers</h2>
+				<ul>
+					{songs.map(({ naam, song }) => (
+						<li>
+							{song} <span class="muted">— {naam}</span>
+						</li>
+					))}
+				</ul>
+			</section>
+		)
+	}
+
+	<section>
+		<h2>Alle antwoorden</h2>
+		{
+			rows.length === 0 ? (
+				<p>Nog geen antwoorden.</p>
+			) : (
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>Naam</th>
+								<th>Erbij?</th>
+								<th>Personen</th>
+								<th>Bericht</th>
+								<th>Laatst gewijzigd</th>
+							</tr>
+						</thead>
+						<tbody>
+							{rows.map((row) => (
+								<tr class={row.aanwezig === 'ja' ? 'yes' : 'no'}>
+									<td>
+										<strong>{row.naam}</strong>
+										{row.email && (
+											<>
+												<br />
+												<a href={`mailto:${row.email}`}>{row.email}</a>
+											</>
+										)}
+									</td>
+									<td>{row.aanwezig === 'ja' ? 'Ja' : 'Nee'}</td>
+									<td>
+										{row.people.length > 0 ? (
+											<ul>
+												{row.people.map((person) => (
+													<li>
+														{person.naam}
+														{person.dieet && <span class="muted"> ({person.dieet})</span>}
+													</li>
+												))}
+											</ul>
+										) : (
+											'—'
+										)}
+									</td>
+									<td class="message">{row.bericht ?? ''}</td>
+									<td class="nowrap">{when(row.updated_at ?? row.created_at)}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
+			)
+		}
+	</section>
+</Layout>
+
+<style>
+	.signed-in {
+		color: rgb(var(--gray));
+		font-size: 0.9em;
+	}
+	.totals {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(8em, 1fr));
+		gap: 0.75em;
+		margin: 1.5em 0 2em;
+	}
+	.totals div {
+		padding: 0.9em 1em;
+		border: 1px solid rgb(var(--gray-light));
+		border-radius: 10px;
+		background: #fff;
+	}
+	.totals .highlight {
+		border-color: var(--accent);
+	}
+	.totals dt {
+		font-size: 0.85em;
+		color: rgb(var(--gray));
+	}
+	.totals dd {
+		margin: 0;
+		font-size: 2em;
+		font-weight: 700;
+	}
+	section {
+		margin-top: 2em;
+	}
+	.muted {
+		color: rgb(var(--gray));
+	}
+	.table-wrap {
+		overflow-x: auto;
+	}
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: 0.95em;
+	}
+	th,
+	td {
+		padding: 0.6em 0.5em;
+		border-bottom: 1px solid rgb(var(--gray-light));
+		text-align: left;
+		vertical-align: top;
+	}
+	td ul {
+		margin: 0;
+		padding-left: 1.1em;
+	}
+	tr.no td {
+		color: rgb(var(--gray));
+	}
+	.message {
+		max-width: 20em;
+		white-space: pre-wrap;
+	}
+	.nowrap {
+		white-space: nowrap;
+	}
+</style>
