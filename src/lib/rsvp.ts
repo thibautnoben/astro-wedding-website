@@ -46,6 +46,8 @@ export type RsvpSummary = {
 	aanwezig: 'ja' | 'nee';
 	personen: Person[];
 	updated: boolean;
+	/** Link back to the pre-filled form (path + query). */
+	editPath?: string;
 };
 
 export const personField = (index: number, field: 'naam' | 'dieet') => `persoon_${index + 1}_${field}`;
@@ -145,8 +147,56 @@ export async function verifyTurnstile(secretKey: string | undefined, token: stri
 	return result.success;
 }
 
-/** Insert or update the RSVP for this e-mail address. */
-export async function saveRsvp(db: D1Database, values: RsvpValues): Promise<{ updated: boolean }> {
+// --- Edit links ---------------------------------------------------------------
+// Each RSVP gets a random, unguessable token. The confirmation e-mail links to
+// /rsvp?edit=<token>, which fills the form with that RSVP so the guest can change it.
+
+const EDIT_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+
+function newEditToken(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(32));
+	return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export const editUrl = (origin: string, token: string) => `${origin}/rsvp?edit=${token}`;
+
+/** The stored RSVP for an edit token, as form values; null when the token is unknown. */
+export async function loadRsvp(db: D1Database, token: string): Promise<RsvpValues | null> {
+	if (!EDIT_TOKEN_RE.test(token)) return null;
+	const row = await db
+		.prepare('SELECT naam, email, aanwezig, personen, dansnummer, bericht FROM rsvps WHERE edit_token = ?')
+		.bind(token)
+		.first<{
+			naam: string;
+			email: string | null;
+			aanwezig: string;
+			personen: string | null;
+			dansnummer: string | null;
+			bericht: string | null;
+		}>();
+	if (!row) return null;
+
+	const values = emptyValues();
+	values.naam = row.naam;
+	values.email = row.email ?? '';
+	values.aanwezig = row.aanwezig === 'ja' || row.aanwezig === 'nee' ? row.aanwezig : '';
+	values.dansnummer = row.dansnummer ?? '';
+	values.bericht = row.bericht ?? '';
+	let stored: Person[] = [];
+	try {
+		stored = row.personen ? (JSON.parse(row.personen) as Person[]) : [];
+	} catch {
+		stored = [];
+	}
+	stored.slice(0, RSVP_MAX_PERSONS).forEach((person, i) => {
+		values.personen[i] = { naam: String(person.naam ?? ''), dieet: String(person.dieet ?? '') };
+	});
+	values.personen[0].naam = values.naam;
+	return values;
+}
+
+/** Insert or update the RSVP for this e-mail address. Returns the RSVP's edit token. */
+export async function saveRsvp(db: D1Database, values: RsvpValues): Promise<{ updated: boolean; token: string }> {
 	const people = attendees(values);
 	const dietSummary = people
 		.filter((person) => person.dieet)
@@ -154,11 +204,14 @@ export async function saveRsvp(db: D1Database, values: RsvpValues): Promise<{ up
 		.join('; ');
 
 	const existing = await db.prepare('SELECT id FROM rsvps WHERE email = ?').bind(values.email).first();
-	await db
+	// An existing RSVP keeps its token (so links in earlier e-mails keep working); rows saved
+	// before edit links existed get one now.
+	const saved = await db
 		.prepare(
-			`INSERT INTO rsvps (naam, email, aanwezig, aantal_gasten, personen, dieetwensen, dansnummer, bericht)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO rsvps (naam, email, aanwezig, aantal_gasten, personen, dieetwensen, dansnummer, bericht, edit_token)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(email) DO UPDATE SET
+				edit_token = COALESCE(rsvps.edit_token, excluded.edit_token),
 				naam = excluded.naam,
 				aanwezig = excluded.aanwezig,
 				aantal_gasten = excluded.aantal_gasten,
@@ -166,7 +219,8 @@ export async function saveRsvp(db: D1Database, values: RsvpValues): Promise<{ up
 				dieetwensen = excluded.dieetwensen,
 				dansnummer = excluded.dansnummer,
 				bericht = excluded.bericht,
-				updated_at = datetime('now')`,
+				updated_at = datetime('now')
+			 RETURNING edit_token`,
 		)
 		.bind(
 			values.naam,
@@ -177,9 +231,11 @@ export async function saveRsvp(db: D1Database, values: RsvpValues): Promise<{ up
 			dietSummary || null,
 			values.aanwezig === 'ja' ? values.dansnummer || null : null,
 			values.bericht || null,
+			newEditToken(),
 		)
-		.run();
-	return { updated: existing !== null };
+		.first<{ edit_token: string }>();
+	if (!saved) throw new Error('RSVP upsert returned no row');
+	return { updated: existing !== null, token: saved.edit_token };
 }
 
 // --- E-mail ---------------------------------------------------------------
@@ -189,19 +245,23 @@ export const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) =>
 
 type Email = { subject: string; html: string; text: string };
 
-/** A block of e-mail content: a paragraph, or a list of items. */
-type Block = string | string[];
+/** A block of e-mail content: a paragraph, a list of items, or a link. */
+type Block = string | string[] | { href: string; label: string };
 
 function renderEmail(subject: string, blocks: Block[]): Email {
 	const html = blocks
-		.map((block) =>
-			Array.isArray(block)
-				? `<ul>${block.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
-				: `<p>${escapeHtml(block).replace(/\n/g, '<br>')}</p>`,
-		)
+		.map((block) => {
+			if (Array.isArray(block)) return `<ul>${block.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+			if (typeof block === 'object') return `<p><a href="${escapeHtml(block.href)}">${escapeHtml(block.label)}</a></p>`;
+			return `<p>${escapeHtml(block).replace(/\n/g, '<br>')}</p>`;
+		})
 		.join('\n');
 	const text = blocks
-		.map((block) => (Array.isArray(block) ? block.map((item) => `- ${item}`).join('\n') : block))
+		.map((block) => {
+			if (Array.isArray(block)) return block.map((item) => `- ${item}`).join('\n');
+			if (typeof block === 'object') return `${block.label}: ${block.href}`;
+			return block;
+		})
 		.join('\n\n');
 	return { subject, html, text };
 }
@@ -210,7 +270,7 @@ const couple = `${PARTNER_ONE} & ${PARTNER_TWO}`;
 const venue = WEDDING_VENUE_ADDRESS ? `${WEDDING_VENUE} (${WEDDING_VENUE_ADDRESS})` : WEDDING_VENUE;
 const personLine = (person: Person) => (person.dieet ? `${person.naam} (${person.dieet})` : person.naam);
 
-export function guestEmail(values: RsvpValues, updated: boolean, origin: string): Email {
+export function guestEmail(values: RsvpValues, updated: boolean, origin: string, token: string): Email {
 	const people = attendees(values);
 	const blocks: Block[] = [`Beste ${values.naam},`];
 
@@ -235,7 +295,9 @@ export function guestEmail(values: RsvpValues, updated: boolean, origin: string)
 	}
 
 	blocks.push(
-		`Wil je iets wijzigen? Vul het formulier op ${origin}/rsvp opnieuw in met hetzelfde e-mailadres, ten laatste op ${RSVP_DEADLINE_LABEL}.`,
+		`Wil je iets wijzigen? Pas je antwoord aan via je persoonlijke link, ten laatste op ${RSVP_DEADLINE_LABEL}.`,
+		{ href: editUrl(origin, token), label: 'Mijn antwoord aanpassen' },
+		'Deel deze link niet: iedereen die hem heeft, kan je antwoord bekijken en wijzigen.',
 	);
 	if (updated) {
 		blocks.push(`Heb je deze wijziging niet zelf gedaan? Laat het ons dan weten via ${CONTACT_EMAIL}.`);
@@ -330,13 +392,14 @@ export async function sendRsvpEmails(
 	values: RsvpValues,
 	updated: boolean,
 	origin: string,
+	token: string,
 ) {
 	if (!apiKey) {
 		console.error('RSVP: RESEND_API_KEY is not configured, skipping e-mails');
 		return;
 	}
 	const results = await Promise.allSettled([
-		sendEmail(apiKey, guestEmail(values, updated, origin), {
+		sendEmail(apiKey, guestEmail(values, updated, origin, token), {
 			to: values.email,
 			attachments:
 				values.aanwezig === 'ja'
