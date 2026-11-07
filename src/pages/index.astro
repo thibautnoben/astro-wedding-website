@@ -20,8 +20,9 @@ const datePart = (opts: Intl.DateTimeFormatOptions) =>
 const weddingDayMonth = `${datePart({ day: '2-digit' })}.${datePart({ month: '2-digit' })}`;
 const weddingYear = datePart({ year: '2-digit' });
 const weddingStart = datePart({ hour: '2-digit', minute: '2-digit', hour12: false });
-// Decorative "climb" profile for the bar-chart field (last bars highlighted).
-const climb = [28, 32, 30, 38, 44, 41, 50, 58, 64, 72, 82, 94];
+// Bottom-left field: a 12-speed cassette, smallest sprocket on the left. The highlighted bar is
+// the current gear; the script below shifts it as the bike in the footer climbs or descends.
+const cassette = [28, 32, 30, 38, 44, 41, 50, 58, 64, 72, 82, 94];
 ---
 
 <Layout title={`${PARTNER_ONE} & ${PARTNER_TWO}`} description={SITE_DESCRIPTION}>
@@ -103,8 +104,8 @@ const climb = [28, 32, 30, 38, 44, 41, 50, 58, 64, 72, 82, 94];
 							<span class="bc-label">Datum</span>
 							<span class="bc-value">{weddingDayMonth}<sup>{weddingYear}</sup></span>
 						</div>
-						<div class="bc-field bc-bars" aria-hidden="true">
-							{climb.map((h, i) => <i class:list={{ 'is-now': i >= climb.length - 2 }} style={`--h: ${h}%`} />)}
+						<div class="bc-field bc-bars" aria-hidden="true" data-gears>
+							{cassette.map((h, i) => <i class:list={{ 'is-now': i === cassette.length - 1 }} style={`--h: ${h}%`} />)}
 						</div>
 						<div class="bc-field">
 							<span class="bc-label">Start</span>
@@ -178,6 +179,46 @@ const climb = [28, 32, 30, 38, 44, 41, 50, 58, 64, 72, 82, 94];
 
 	updateCountdown();
 	setInterval(updateCountdown, 1000);
+
+	// --- Gears follow the bike in the footer ---
+	// The footer bike rides a 34.5s CSS loop (see the footer-ride keyframes in Footer.astro; keep
+	// these timings in sync): it climbs right → left, rests and turns, then rides down to the right.
+	// Uphill shifts to the biggest sprocket (easiest gear), downhill to the smallest, one gear at a time.
+	const RIDE_MS = 34500;
+	const CLIMB_END_MS = 24000;
+	const DESCENT_START_MS = 25250;
+	const DESCENT_END_MS = 33250;
+	const SHIFT_EVERY_MS = 250;
+
+	function slope(): 'up' | 'down' | null {
+		const rider = document.querySelector('.footer-rider');
+		const ride = rider
+			?.getAnimations()
+			.find((animation) => animation instanceof CSSAnimation && animation.animationName === 'footer-ride');
+		const time = Number(ride?.currentTime);
+		// No animation (e.g. reduced motion: the bike stays parked) → no slope.
+		if (!Number.isFinite(time)) return null;
+		const position = time % RIDE_MS;
+		if (position < CLIMB_END_MS) return 'up';
+		if (position >= DESCENT_START_MS && position < DESCENT_END_MS) return 'down';
+		return null; // resting/turning at the top or bottom: stay in gear
+	}
+
+	const sprockets = [...document.querySelectorAll<HTMLElement>('[data-gears] i')];
+	if (sprockets.length) {
+		let gear = sprockets.findIndex((sprocket) => sprocket.classList.contains('is-now'));
+		if (gear < 0) gear = sprockets.length - 1;
+		const shift = () => {
+			const direction = slope();
+			const target = direction === 'up' ? sprockets.length - 1 : direction === 'down' ? 0 : gear;
+			if (target === gear) return;
+			sprockets[gear].classList.remove('is-now');
+			gear += Math.sign(target - gear);
+			sprockets[gear].classList.add('is-now');
+		};
+		shift();
+		setInterval(shift, SHIFT_EVERY_MS);
+	}
 </script>
 
 <style>
@@ -404,6 +445,11 @@ const climb = [28, 32, 30, 38, 44, 41, 50, 58, 64, 72, 82, 94];
 	}
 	.bc-bars i.is-now {
 		background: var(--bc-blue);
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.bc-bars i {
+			transition: background-color 0.15s ease;
+		}
 	}
 
 	.bc-softkeys {
