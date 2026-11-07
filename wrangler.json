@@ -4,7 +4,7 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"vars": {
 		"TURNSTILE_SITE_KEY": "0x4AAAAAAD4p44SyuNbZkFwN",
-		"ACCESS_TEAM_DOMAIN": "thikibono.noben.net",
+		"ACCESS_TEAM_DOMAIN": "noben.cloudflareaccess.com",
 		"ACCESS_AUD": "9358548b55fbfa9415df1649fc27e8ef3169fac8625caa4c5b5bd3bcfd7ad234"
 	},
 	"assets": {
