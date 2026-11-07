@@ -12,7 +12,10 @@ CREATE TABLE IF NOT EXISTS rsvps (
 	dansnummer TEXT,
 	bericht TEXT,
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
-	updated_at TEXT
+	updated_at TEXT,
+	-- Random secret for the edit link in the confirmation e-mail (/rsvp?edit=<token>).
+	edit_token TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rsvps_email ON rsvps(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rsvps_edit_token ON rsvps(edit_token);

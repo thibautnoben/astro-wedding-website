@@ -9,6 +9,7 @@ import {
 	LIMITS,
 	emptyValues,
 	isClosed,
+	loadRsvp,
 	isSameOrigin,
 	parseForm,
 	personField,
@@ -56,16 +57,17 @@ if (Astro.request.method === 'POST') {
 			formError = 'De controle tegen spam is niet gelukt. Wacht even tot de controle klaar is en probeer opnieuw.';
 		} else {
 			try {
-				const { updated } = await saveRsvp(env.DB, values);
+				const { updated, token } = await saveRsvp(env.DB, values);
 				const origin = new URL(Astro.request.url).origin;
 				Astro.locals.cfContext.waitUntil(
-					sendRsvpEmails(env.RESEND_API_KEY, RSVP_NOTIFY_EMAIL, values, updated, origin),
+					sendRsvpEmails(env.RESEND_API_KEY, RSVP_NOTIFY_EMAIL, values, updated, origin, token),
 				);
 				const summary: RsvpSummary = {
 					naam: values.naam,
 					aanwezig: values.aanwezig as 'ja' | 'nee',
 					personen: values.aanwezig === 'ja' ? values.personen.filter((p, i) => i === 0 || p.naam) : [],
 					updated,
+					editPath: `/rsvp?edit=${token}`,
 				};
 				Astro.cookies.set(SUMMARY_COOKIE, summary, {
 					path: '/rsvp',
@@ -94,6 +96,25 @@ if (succeeded) {
 		summary = undefined;
 	}
 	Astro.cookies.delete(SUMMARY_COOKIE, { path: '/rsvp' });
+}
+
+// --- Edit link from the confirmation e-mail: fill the form with the stored RSVP ---
+const editToken = Astro.request.method === 'GET' ? Astro.url.searchParams.get('edit') : null;
+let editing = false;
+let editNotFound = false;
+if (editToken !== null) {
+	// The page now contains personal data: never cache it or let it be indexed.
+	Astro.response.headers.set('Cache-Control', 'private, no-store');
+	Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+	if (!closed) {
+		const stored = await loadRsvp(env.DB, editToken);
+		if (stored) {
+			values = stored;
+			editing = true;
+		} else {
+			editNotFound = true;
+		}
+	}
 }
 
 const showForm = !succeeded && !closed;
@@ -146,7 +167,8 @@ const errorList = Object.entries(errors);
 				)}
 				{!closed && (
 					<p class="result-change">
-						Iets vergeten of veranderd? <a href="/rsvp">Pas je antwoord aan</a> met hetzelfde e-mailadres.
+						Iets vergeten of veranderd? <a href={summary?.editPath ?? '/rsvp'}>Pas je antwoord aan</a>
+						{summary?.editPath ? '.' : ' met hetzelfde e-mailadres.'}
 					</p>
 				)}
 			</section>
@@ -173,6 +195,24 @@ const errorList = Object.entries(errors);
 					formulier opnieuw in met hetzelfde e-mailadres om je antwoord aan te passen. Vragen? Mail naar{' '}
 					<a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
 				</p>
+
+				{editing && (
+					<div class="notice notice-info" role="status">
+						<p>
+							Hieronder staat je huidige antwoord. Pas aan wat je wil en klik op <strong>Versturen</strong>. Houd
+							hetzelfde e-mailadres, anders maken we een nieuw antwoord aan.
+						</p>
+					</div>
+				)}
+
+				{editNotFound && (
+					<div class="notice notice-error" role="alert">
+						<p>
+							We vonden geen antwoord bij deze link. Vul het formulier opnieuw in met hetzelfde e-mailadres om je
+							antwoord aan te passen.
+						</p>
+					</div>
+				)}
 
 				{formError && (
 					<div class="notice notice-error" role="alert" tabindex="-1" data-focus>
@@ -502,6 +542,9 @@ const errorList = Object.entries(errors);
 	}
 	.notice-error a {
 		color: inherit;
+	}
+	.notice-info {
+		background: rgba(0, 0, 0, 0.04);
 	}
 	.notice:focus,
 	.result:focus {
