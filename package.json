@@ -15,7 +15,7 @@
 		"@astrojs/cloudflare": "^14.4.4",
 		"@astrojs/sitemap": "^3.7.4",
 		"@fontsource/open-sauce-sans": "5.3.0",
-		"astro": "^7.4.5",
+		"astro": "^7.4.12",
 		"motion": "14.9.1",
 		"typescript": "^7.0.2"
 	},
